@@ -1,0 +1,35 @@
+<script>
+/* ==========================================================================
+   ANNOUNCEMENTS — the horizontal announcement carousel.
+   Rendered inside the Home screen via renderAnnouncements(); kept as its own
+   module so announcement markup lives in one place.
+   ========================================================================== */
+
+function renderAnnouncements(){
+  const annCards = (DATA.announcements || []).map(a => {
+    let imgContent = a.imgUrl 
+      ? `<img src="${esc(a.imgUrl)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" alt="Announcement"/><div style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;font-size:11px;color:#8d8d8d;background:#e2e2e2;">Image unavailable</div>`
+      : `<span style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#8d8d8d;">No image</span>`;
+
+    return `
+      <div style="flex:0 0 220px;border-radius:18px;overflow:hidden;background:#ffffff;border:1px solid #d1d1d1;box-shadow:0 4px 16px -12px rgba(17,24,32,.15);">
+        <div style="position:relative;height:140px;background:#e2e2e2;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+          ${imgContent}
+          <span style="position:absolute;top:10px;left:10px;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#ffffff;background:#2563eb;padding:4px 9px;border-radius:100px;z-index:2;">${esc(a.tag)}</span>
+        </div>
+        <div style="padding:14px;">
+          <div style="font-size:14px;font-weight:600;color:#111820;line-height:1.35;">${esc(a.title)}</div>
+          <div style="font-size:12px;color:#8d8d8d;margin-top:6px;">${esc(a.time)}</div>
+        </div>
+      </div>`;
+  }).join("");
+
+  return `<div style="margin-top:28px;">
+      <div style="padding:0 22px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="serif" style="font-size:20px;font-weight:700;color:#111820;">Announcements</div>
+        <div style="font-size:14px;font-weight:600;color:#2563eb;cursor:pointer;">See All</div>
+      </div>
+      <div class="scr" style="display:flex;gap:14px;overflow-x:auto;padding:0 22px 4px;">${annCards || '<div style="padding:10px 22px;color:#8d8d8d;font-size:14px;">No announcements</div>'}</div>
+    </div>`;
+}
+</script>

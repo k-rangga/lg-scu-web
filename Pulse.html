@@ -1,0 +1,172 @@
+<script>
+/* ==========================================================================
+   PULSE CHECK — the periodic member check-in: intro/overview, the scored +
+   open-ended question form, the thank-you screen, and the already-submitted
+   screen.
+   ========================================================================== */
+
+function pulseScreen(){
+  if (!DATA) return `<div class="screen"></div>`;
+  const p = DATA.pulse;
+  const daysColor = p.isUrgent ? '#f39c12' : '#60a5fa';
+
+  return `<div class="screen" style="background:#f2f2f2;">
+    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
+      <div onclick="app.backHome()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
+      <div>
+        <div style="font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#8d8d8d;">Check-In</div>
+        <div class="serif" style="font-size:24px;font-weight:600;color:#111820;">Pulse Check</div>
+      </div>
+    </div>
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
+      <div style="padding:0 22px;font-size:14px;color:#404040;line-height:1.45;margin-bottom:20px;margin-top:10px;">
+        A quick, honest check-in on how you're doing with your group and with life.
+      </div>
+
+      <div style="padding:0 22px;margin-bottom:24px;">
+        <div style="background:#1c3249;color:#ffffff;border-radius:24px;padding:24px;position:relative;overflow:hidden;box-shadow:0 12px 32px -10px rgba(28,50,73,.4);">
+          <div style="position:absolute;right:-30px;top:-30px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.08);"></div>
+          
+          <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.18);padding:5px 12px;border-radius:100px;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:14px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#f4d03f;"></div> Open Now
+          </div>
+
+          <div class="serif" style="font-size:26px;font-weight:600;letter-spacing:-.3px;">${esc(p.windowTitle)}</div>
+          <div style="font-size:13px;color:#d1d1d1;margin-top:4px;">${esc(p.closes)}</div>
+
+          <div style="display:flex;align-items:center;gap:6px;margin-top:20px;font-size:13px;color:${daysColor};font-weight:500;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            ${esc(p.daysLeftNote)}
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:0 22px;display:flex;flex-direction:column;gap:12px;">
+        <div style="background:#ffffff;border-radius:20px;padding:18px 20px;display:flex;align-items:center;gap:16px;box-shadow:0 4px 16px -12px rgba(17,24,32,.1);">
+          <div style="width:48px;height:48px;border-radius:14px;background:#eff6ff;color:#2563eb;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </div>
+          <div>
+            <div style="font-size:16px;font-weight:600;color:#111820;">${p.questionCount} quick questions</div>
+            <div style="font-size:13px;color:#8d8d8d;margin-top:2px;">Rate how much you agree, one tap each.</div>
+          </div>
+        </div>
+
+        <div style="background:#ffffff;border-radius:20px;padding:18px 20px;display:flex;align-items:center;gap:16px;box-shadow:0 4px 16px -12px rgba(17,24,32,.1);">
+          <div style="width:48px;height:48px;border-radius:14px;background:#e2e2e2;color:#111820;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div>
+            <div style="font-size:16px;font-weight:600;color:#111820;">${p.openQuestionCount} open question${p.openQuestionCount > 1 ? 's' : ''}</div>
+            <div style="font-size:13px;color:#8d8d8d;margin-top:2px;">Say anything on your heart, in your words.</div>
+          </div>
+        </div>
+
+        <div style="background:#ffffff;border-radius:20px;padding:18px 20px;display:flex;align-items:center;gap:16px;box-shadow:0 4px 16px -12px rgba(17,24,32,.1);">
+          <div style="width:48px;height:48px;border-radius:14px;background:#f2f2f2;color:#404040;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div>
+            <div style="font-size:16px;font-weight:600;color:#111820;">About ${p.estimatedMinutes} minute${p.estimatedMinutes > 1 ? 's' : ''}</div>
+            <div style="font-size:13px;color:#8d8d8d;margin-top:2px;">Your answers are shared only with your mentor.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:0 22px;margin-top:28px;">
+        <div onclick="app.checkPulseSubmission()" style="cursor:pointer;height:54px;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;border-radius:16px;font-size:16px;font-weight:600;box-shadow:0 10px 24px rgba(37,99,235,0.4);">Start pulse check</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function pulseFormScreen(){
+  if (!DATA) return `<div class="screen"></div>`;
+  const p = DATA.pulse;
+  const options = ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"];
+
+  const questionsHtml = (p.questions || []).map((q, qi) => {
+    const optsHtml = options.map((opt, optIdx) => {
+      const selected = S.pulseAnswers[qi] === optIdx;
+      return `<div onclick="app.pickPulse(${qi}, ${optIdx})" style="cursor:pointer;flex:1;text-align:center;padding:10px 4px;border-radius:10px;font-size:12px;font-weight:600;background:${selected?'#2563eb':'#f2f2f2'};color:${selected?'#ffffff':'#8d8d8d'};border:1px solid ${selected?'#2563eb':'#d1d1d1'};transition:all .15s ease;">${opt}</div>`;
+    }).join("");
+
+    return `<div style="background:#ffffff;border-radius:18px;padding:18px;box-shadow:0 4px 16px -12px rgba(17,24,32,.1);margin-bottom:14px;">
+      <div style="font-size:15px;font-weight:600;color:#111820;line-height:1.4;margin-bottom:14px;">${qi+1}. ${esc(q)}</div>
+      <div style="display:flex;gap:6px;">${optsHtml}</div>
+    </div>`;
+  }).join("");
+
+  const openQuestionsHtml = (p.openQuestions || []).map((oq, oqi) => {
+    const key = 'oq_' + oqi;
+    return `<div style="background:#ffffff;border-radius:18px;padding:18px;box-shadow:0 4px 16px -12px rgba(17,24,32,.1);margin-bottom:14px;">
+      <div style="font-size:15px;font-weight:600;color:#111820;line-height:1.4;margin-bottom:12px;">${esc(oq)}</div>
+      <textarea oninput="app.onPulseOpenInput('${key}', this.value)" placeholder="Type your response here..." style="width:100%;height:100px;border-radius:12px;border:1px solid #d1d1d1;background:#f2f2f2;padding:12px;font-size:14px;color:#111820;resize:none;line-height:1.4;">${esc(S.pulseAnswers[key] || '')}</textarea>
+    </div>`;
+  }).join("");
+
+  return `<div class="screen" style="background:#f2f2f2;">
+    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 10px;">
+      ${subHeader("backPulse","Pulse Check","")}
+    </div>
+    <div class="scr fill" style="padding:0 22px 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div style="margin-top:10px;">
+        ${questionsHtml}
+        ${openQuestionsHtml}
+      </div>
+      <div onclick="app.submitPulse()" style="margin-top:20px;height:54px;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;border-radius:16px;font-size:16px;font-weight:600;cursor:pointer;box-shadow:0 10px 24px rgba(37,99,235,0.4);">Submit pulse check</div>
+    </div>
+  </div>`;
+}
+
+function pulseDoneScreen(){
+  return `<div class="screen" style="background:#1c3249;align-items:center;justify-content:center;color:#ffffff;"><div class="serif" style="font-size:30px;">Thank you</div><div onclick="app.backHome()" style="margin-top:34px;height:52px;width:280px;border-radius:14px;background:#2563eb;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 24px rgba(37,99,235,0.4);">Back to home</div></div>`;
+}
+
+function pulseAlreadySubmittedScreen(){
+  return `<div class="screen" style="background-color: #1c3249; display:flex; flex-direction:column; justify-content:space-between; padding:calc(60px + env(safe-area-inset-top)) 34px 40px; color:#ffffff; text-align:center;">
+    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; flex:1;">
+      <div style="width:240px; height:240px; border-radius:30px; margin:0 auto 20px; overflow:hidden; box-shadow:0 12px 32px rgba(0,0,0,0.3); background:rgba(255,255,255,0.05);">
+        <img src="https://lh3.googleusercontent.com/d/1S-kfKA8jZGpMcX1z3GVX4lX7Ie58AM2x=s0" style="width:100%; height:100%; object-fit:cover;" alt="Already Submitted"/>
+      </div>
+      <div class="serif" style="font-size:26px; font-weight:700; margin-bottom:10px;">Already Submitted</div>
+      <div style="font-size:14px; color:#d1d1d1; line-height:1.5; max-width:320px;">You have already submitted this pulse check. Thank you for your response!</div>
+    </div>
+    <div onclick="app.closePulseAlreadySubmittedModal()" style="cursor:pointer; width:100%; height:52px; background:#2563eb; color:#ffffff; display:flex; align-items:center; justify-content:center; border-radius:14px; font-size:16px; font-weight:600; box-shadow:0 10px 24px rgba(37,99,235,0.4);">Understand</div>
+  </div>`;
+}
+
+SCREENS.pulse = pulseScreen;
+SCREENS.pulseForm = pulseFormScreen;
+SCREENS.pulseDone = pulseDoneScreen;
+SCREENS.pulseAlreadySubmitted = pulseAlreadySubmittedScreen;
+
+Object.assign(window.app, {
+  goPulse: () => go("pulse"),
+  backPulse: () => go("pulse"),
+  goPulseForm: () => go("pulseForm"),
+
+  checkPulseSubmission: () => {
+    if (DATA && DATA.pulse && DATA.pulse.submitted) {
+      go("pulseAlreadySubmitted");
+    } else {
+      go("pulseForm");
+    }
+  },
+
+  closePulseAlreadySubmittedModal: () => {
+    go("home");
+  },
+
+  pickPulse: (qi, optIdx) => { S.pulseAnswers[qi] = optIdx; render(); },
+  onPulseOpenInput: (key, val) => { S.pulseAnswers[key] = val; },
+
+  submitPulse: () => {
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run.savePulse({ userEmail: S.currentUserEmail, answers: S.pulseAnswers, note: S.pulseOE });
+    }
+    DATA.pulse.submitted = true; go("pulseDone");
+  }
+});
+</script>

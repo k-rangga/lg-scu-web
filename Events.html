@@ -1,0 +1,138 @@
+<script>
+/* ==========================================================================
+   EVENTS — the schedule: "next up" highlight, upcoming list, and the
+   full event-detail view.
+   ========================================================================== */
+
+function eventsScreen(){
+  if (!DATA) return `<div class="screen"></div>`;
+  const ne = DATA.nextEvent;
+  const nextUpCard = ne ? `
+    <div style="margin-top:16px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#2563eb;margin-bottom:10px;">Next Up</div>
+      <div onclick="app.openNextEvent()" style="cursor:pointer;background:#1c3249;color:#ffffff;border-radius:24px;padding:24px;position:relative;overflow:hidden;box-shadow:0 12px 32px -10px rgba(28,50,73,.5);">
+        <div class="serif" style="font-size:24px;font-weight:600;letter-spacing:-.3px;">${esc(ne.title)}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px;">
+          <div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#60a5fa;">Date</div>
+            <div style="font-size:15px;font-weight:600;margin-top:3px;">${esc(ne.date)}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#60a5fa;">Time</div>
+            <div style="font-size:15px;font-weight:600;margin-top:3px;">${esc(ne.time)}</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:16px;font-size:13px;color:#d1d1d1;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg> ${esc(ne.location)}
+        </div>
+        <div style="height:1px;background:rgba(255,255,255,.12);margin:18px 0;"></div>
+        <div style="font-size:13px;color:#d1d1d1;line-height:1.45;">${esc(truncate(ne.summary, 150))}</div>
+        <div style="display:flex;align-items:center;gap:4px;margin-top:18px;font-size:14px;font-weight:600;color:#f4d03f;">
+          View full details &gt;
+        </div>
+      </div>
+    </div>` : "";
+
+  const upcomingRows = (DATA.events || []).map((e, i) => `
+    <div onclick="app.openEvent(${i})" style="cursor:pointer;background:#ffffff;border-radius:18px;padding:16px;display:flex;align-items:center;gap:16px;margin-bottom:12px;box-shadow:0 4px 16px -12px rgba(17,24,32,.15);">
+      <div style="width:52px;height:52px;border-radius:14px;background:#f2f2f2;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;">
+        <span style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#2563eb;">${esc(e.month || "AUG")}</span>
+        <span class="serif" style="font-size:17px;font-weight:700;color:#111820;line-height:1.1;">${esc(e.day || "1")}</span>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:15px;font-weight:600;color:#111820;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.title)}</div>
+        <div style="font-size:13px;color:#8d8d8d;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.time)} · ${esc(e.location)}</div>
+      </div>
+      <div style="color:#8d8d8d;flex-shrink:0;">${I.chev}</div>
+    </div>`).join("");
+
+  return `<div class="screen" style="background:#f2f2f2;">
+    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 20px;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#8d8d8d;">Schedule</div>
+      <div class="serif" style="font-size:28px;font-weight:600;letter-spacing:-.5px;margin-top:2px;">Events</div>
+    </div>
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
+      <div style="padding:0 22px;">
+        ${nextUpCard}
+      </div>
+      <div style="padding:0 22px;margin-top:28px;">
+        <div class="serif" style="font-size:20px;font-weight:700;color:#111820;margin-bottom:14px;">Upcoming</div>
+        <div>${upcomingRows || emptyRow("No upcoming events")}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function eventDetailScreen(){
+  const e = S.selectedEvent || {};
+  return `<div class="screen" style="background:#f2f2f2;">
+    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
+      <div onclick="app.backEvents()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);flex-shrink:0;">${I.back}</div>
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#8d8d8d;">Event Details</div>
+        <div class="serif" style="font-size:24px;font-weight:600;color:#111820;line-height:1.2;letter-spacing:-.4px;margin-top:2px;">${esc(e.title)}</div>
+      </div>
+    </div>
+    <div class="scr fill" style="background:#f2f2f2;padding:20px 22px 140px;position:relative;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div style="background:#ffffff;border-radius:20px;padding:6px 18px;margin-top:4px;box-shadow:0 6px 24px -12px rgba(17,24,32,.1);border:1px solid #d1d1d1;">
+        <div style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid #f2f2f2;">
+          <div style="width:40px;height:40px;border-radius:12px;background:#eff6ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            ${I.cal}
+          </div>
+          <div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#8d8d8d;">Date & time</div>
+            <div style="font-size:15px;font-weight:600;color:#111820;margin-top:2px;">${esc(e.date)} · ${esc(e.time)}</div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:16px;padding:14px 0;">
+          <div style="width:40px;height:40px;border-radius:12px;background:#eff6ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            ${I.pin}
+          </div>
+          <div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#8d8d8d;">Location</div>
+            <div style="font-size:15px;font-weight:600;color:#111820;margin-top:2px;">${esc(e.location)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div onclick="app.addEventToCalendar()" style="cursor:pointer;margin-top:16px;display:flex;align-items:center;justify-content:center;gap:8px;height:48px;border-radius:14px;background:#2563eb;color:#ffffff;font-size:15px;font-weight:600;box-shadow:0 8px 20px rgba(37,99,235,0.4);">
+        ${I.cal.replace('stroke="#2563eb"','stroke="currentColor"')} Add to Calendar
+      </div>
+
+      <div style="margin-top:30px;">
+        <div class="serif" style="font-size:20px;font-weight:700;color:#111820;margin-bottom:12px;">About this event</div>
+        <div style="font-size:15px;color:#404040;line-height:1.65;white-space:pre-line;">${esc(e.summary || "No description provided.")}</div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
+SCREENS.events = eventsScreen;
+SCREENS.eventDetail = eventDetailScreen;
+
+Object.assign(window.app, {
+  openEvent: (i) => { S.selectedEvent = DATA.events[i]; go("eventDetail"); },
+  openNextEvent: () => { if (DATA.nextEvent) { S.selectedEvent = DATA.nextEvent; go("eventDetail"); } },
+  backEvents: () => go("events"),
+
+  /* Opens Google Calendar's compose form prefilled with this event. The start
+     and end come from the server (calStart/calEnd in Code.gs) because the
+     display date carries no year. A row whose time cell couldn't be parsed
+     arrives without them and simply opens the form with the date left blank. */
+  addEventToCalendar: () => {
+    const e = S.selectedEvent || {};
+    const params = [
+      "action=TEMPLATE",
+      "text=" + encodeURIComponent(e.title || "Life Group Event"),
+      (e.calStart && e.calEnd) ? "dates=" + e.calStart + "/" + e.calEnd : "",
+      (!e.calAllDay && e.calTz) ? "ctz=" + encodeURIComponent(e.calTz) : "",
+      e.location ? "location=" + encodeURIComponent(e.location) : "",
+      e.summary ? "details=" + encodeURIComponent(e.summary) : ""
+    ].filter(Boolean).join("&");
+    window.open("https://calendar.google.com/calendar/render?" + params, "_blank");
+  }
+});
+</script>

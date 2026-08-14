@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" id="theme-color-meta" content="#111820">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Life Group App</title>
+
+<?!= include('Styles'); ?>
+</head>
+<body>
+<div id="app"></div>
+
+<!--
+  Load order matters:
+  1. Core        — shared state, helpers, render(), nav, swipe. Defines SCREENS = {} and app = {}.
+  2. Feature files — each registers its screen(s) into SCREENS and its handlers into app.
+  3. Init        — mock-data fallback + the first render(). Must be LAST.
+-->
+<?!= include('Core'); ?>
+<?!= include('Account'); ?>
+<?!= include('Home'); ?>
+<?!= include('Announcements'); ?>
+<?!= include('Community'); ?>
+<?!= include('Events'); ?>
+<?!= include('Resources'); ?>
+<?!= include('Pulse'); ?>
+<?!= include('Reflection'); ?>
+<?!= include('Group'); ?>
+<?!= include('Notifications'); ?>
+<?!= include('Init'); ?>
+</body>
+</html>

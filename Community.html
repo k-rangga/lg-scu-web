@@ -1,0 +1,168 @@
+<script>
+/* ==========================================================================
+   COMMUNITY — cross-group praise & prayer feed, search, and the compose
+   bottom sheet for posting a new praise or prayer request.
+   ========================================================================== */
+
+function getCommunityPostsHTML(query) {
+  // Posts arrive in the second phase of sign-in, so an empty list while that is
+  // in flight is "not fetched yet", not "no posts". Guarded here rather than in
+  // communityScreen so the search re-render (onCommunitySearch) is covered too.
+  if (S.isLoadingExtended && !(DATA.posts || []).length) return skeletonList(3);
+
+  const q = (query || "").toLowerCase().trim();
+  const filteredPosts = (DATA.posts || []).filter(p => {
+    if (!q) return true;
+    return (p.author || "").toLowerCase().includes(q) ||
+           (p.text || "").toLowerCase().includes(q) ||
+           (p.group || "").toLowerCase().includes(q);
+  });
+
+  if (filteredPosts.length === 0) {
+    return '<div style="padding:40px 20px;text-align:center;color:#8d8d8d;font-size:14px;">No matching posts found</div>';
+  }
+
+  return filteredPosts.map(p => {
+    const isPraise = p.type === "Praise";
+    const badgeBg = isPraise ? "#f4d03f" : "#eff6ff";
+    const badgeColor = isPraise ? "#111820" : "#2563eb";
+
+    // Restricted posts get a scope pill so the author can see the limit held.
+    // Public posts show nothing — that is the default and needs no label.
+    const vis = (p.visibility || "Public").toLowerCase();
+    const scopeLabel = vis === "mentor" ? "MENTOR ONLY" : (vis === "group" ? "MY GROUP" : "");
+    const scopePill = scopeLabel
+      ? `<span style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#404040;background:#f2f2f2;border:1px solid #d1d1d1;padding:4px 11px;border-radius:100px;">${esc(scopeLabel)}</span>`
+      : "";
+
+    return `<div style="background:#ffffff;border-radius:20px;padding:18px 20px;margin-bottom:14px;box-shadow:0 4px 16px -12px rgba(17,24,32,.15);border:1px solid #d1d1d1;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="width:44px;height:44px;border-radius:50%;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0;">${esc(getInitials(p.author))}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:16px;font-weight:700;color:#111820;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.author)}</div>
+          <div style="font-size:12px;color:#8d8d8d;margin-top:2px;">${esc(p.group || "Life Group")} · ${esc(timeAgo(p.time))}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          ${scopePill}
+          <span style="font-size:10px;font-weight:700;letter-spacing:.6px;color:${badgeColor};background:${badgeBg};padding:5px 12px;border-radius:100px;">${esc(p.type.toUpperCase())}</span>
+        </div>
+      </div>
+      <div style="font-size:14px;color:##111820;line-height:1.55;margin-top:14px;white-space:pre-wrap;">${parseFormatting(p.text)}</div>
+    </div>`;
+  }).join("");
+}
+
+function communityScreen(){
+  if (!DATA) return `<div class="screen"></div>`;
+
+  return `<div class="screen" style="background:#f2f2f2;">
+    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
+      <div onclick="app.backHome()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
+      <div>
+        <div class="serif" style="font-size:26px;font-weight:600;color:#111820;letter-spacing:-.4px;">Prayer</div>
+        <div style="font-size:13px;color:#8d8d8d;margin-top:1px;">Praise & prayer across all groups</div>
+      </div>
+    </div>
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
+      
+      <div style="padding:0 22px;margin-top:10px;">
+        <div style="position:relative;display:flex;align-items:center;">
+          <svg style="position:absolute;left:14px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8d8d8d" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="communitySearchInput" oninput="app.onCommunitySearch(this.value)" value="${esc(S.communitySearchQuery)}" placeholder="Search people, posts, or groups..." style="width:100%;height:46px;background:#ffffff;border:1px solid #d1d1d1;border-radius:14px;padding:0 14px 0 40px;font-size:14px;color:#111820;box-shadow:0 2px 8px -6px rgba(17,24,32,.1);"/>
+        </div>
+      </div>
+
+      <div id="communityPostsContainer" style="padding:0 22px;margin-top:16px;">
+        ${getCommunityPostsHTML(S.communitySearchQuery)}
+      </div>
+    </div>
+
+    <div onclick="app.openCompose()" style="position:absolute;right:22px;bottom:90px;width:56px;height:56px;border-radius:50%;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 10px 28px rgba(37,99,235,0.5);z-index:40;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    </div>
+
+  </div>`;
+}
+
+function composeSheet(){
+  const anim = overlayAnim("compose", S.composeOpen);
+  if (!S.composeOpen) return "";
+  const typeBtn = (t, label) => {
+    const on = S.composeType === t;
+    return `<div onclick="app.setComposeType('${t}')" style="cursor:pointer;flex:1;text-align:center;padding:10px;border-radius:10px;font-size:14px;font-weight:600;background:${on?'#2563eb':'#f2f2f2'};color:${on?'#ffffff':'#404040'};">${label}</div>`;
+  };
+  const visBtn = (v, label) => {
+    const on = S.composeVisibility === v;
+    return `<div onclick="app.setComposeVisibility('${v}')" style="cursor:pointer;flex:1;text-align:center;padding:9px 4px;border-radius:10px;font-size:13px;font-weight:600;background:${on?'#2563eb':'#f2f2f2'};color:${on?'#ffffff':'#404040'};">${label}</div>`;
+  };
+
+  return `<div class="sheet-backdrop${anim}" onclick="app.closeCompose()">
+    <div class="sheet${anim}" onclick="event.stopPropagation()" style="padding-bottom:calc(30px + env(safe-area-inset-bottom));">
+      <div class="grab"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <div class="serif" style="font-size:20px;font-weight:700;color:#111820;">Share to Community</div>
+        <div onclick="app.closeCompose()" style="cursor:pointer;font-size:14px;color:#8d8d8d;font-weight:600;">Cancel</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        ${typeBtn("Praise", "Praise")}
+        ${typeBtn("Prayer", "Prayer")}
+      </div>
+      <div style="font-size:12px;color:#8d8d8d;font-weight:600;margin-bottom:6px;">Who can see this</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        ${visBtn("Public", "Everyone")}
+        ${visBtn("Group", "My group")}
+        ${visBtn("Mentor", "Mentor only")}
+      </div>
+      <textarea oninput="app.onComposeInput(this.value)" placeholder="Write your praise or prayer request..." style="width:100%;height:120px;border:1px solid #d1d1d1;padding:12px;border-radius:12px;font-size:14px;background:#f2f2f2;color:#111820;resize:none;line-height:1.4;">${esc(S.composeText)}</textarea>
+      <div onclick="app.submitPost()" style="margin-top:14px;height:48px;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;border-radius:14px;cursor:pointer;font-weight:600;box-shadow:0 8px 20px rgba(37,99,235,0.4);">Post</div>
+    </div>
+  </div>`; 
+}
+
+SCREENS.community = communityScreen;
+
+Object.assign(window.app, {
+  openCommunity: () => go("community"),
+
+  openCompose: () => { if (S.composeOpen) return; S.composeOpen = true; render(); },
+  closeCompose: () => { S.composeOpen = false; S.composeText = ""; S.composeType = "Praise"; S.composeVisibility = "Public"; render(); },
+  onComposeInput: (v) => { S.composeText = v; },
+  setComposeType: (t) => { S.composeType = t; render(); },
+  setComposeVisibility: (v) => { S.composeVisibility = v; render(); },
+
+  onCommunitySearch: (v) => {
+    S.communitySearchQuery = v;
+    const container = document.getElementById("communityPostsContainer");
+    if (container) {
+      container.innerHTML = getCommunityPostsHTML(v);
+    }
+  },
+
+  submitPost: () => {
+    const text = S.composeText.trim(); if (!text) return;
+    const postObj = { userEmail: S.currentUserEmail, type: S.composeType, text: text, timestamp: new Date().toISOString(), visibility: S.composeVisibility };
+
+    DATA.posts.unshift({
+      author: DATA.user.name,
+      group: DATA.group.name,
+      type: S.composeType,
+      text,
+      time: postObj.timestamp,
+      initials: getInitials(DATA.user.name),
+      visibility: S.composeVisibility,
+      mine: true
+    });
+    S.composeOpen = false; S.composeText = ""; S.composeType = "Praise"; S.composeVisibility = "Public";
+    go("community");
+
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withFailureHandler((err) => {
+          console.error("Failed to post to server: " + err.message);
+        })
+        .savePost(postObj);
+    }
+  }
+});
+</script>

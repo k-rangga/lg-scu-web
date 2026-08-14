@@ -1,0 +1,48 @@
+<script>
+/* ==========================================================================
+   RESOURCES — the library: a featured PDF plus the full downloadable list.
+   Navigation into this screen is handled by the bottom nav (app.goResources
+   in Core); downloads open directly via window.open.
+   ========================================================================== */
+
+function resourcesScreen(){
+  if (!DATA) return `<div class="screen"></div>`;
+  const f = DATA.resources.featured;
+  const featured = f ? `<div style="padding:0 22px;margin-top:20px;"><div style="border-radius:20px;padding:20px;background:#1c3249;color:#ffffff;position:relative;overflow:hidden;">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#60a5fa;">Featured</div>
+        <div style="display:flex;align-items:center;gap:14px;margin-top:12px;">
+          <div style="width:52px;height:64px;border-radius:8px;background:rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg></div>
+          <div style="flex:1;"><div style="font-size:17px;font-weight:600;line-height:1.25;">${esc(f.title)}</div><div style="font-size:13px;color:#d1d1d1;margin-top:4px;">${esc(f.meta)}</div></div>
+        </div>
+        <div onclick="window.open('${esc(f.fileUrl)}', '_blank')" style="cursor:pointer;margin-top:16px;display:flex;align-items:center;justify-content:center;gap:8px;height:48px;border-radius:14px;background:#2563eb;color:#ffffff;font-size:15px;font-weight:600;box-shadow:0 8px 20px rgba(37,99,235,0.4);">${I.download.replace('stroke="#2563eb"','stroke="currentColor"')} Download PDF</div>
+      </div></div>` : "";
+
+  const rows = (DATA.resources.list || []).map(r => `
+    <div onclick="window.open('${esc(r.fileUrl)}', '_blank')" style="cursor:pointer;background:#ffffff;border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:14px;box-shadow:0 4px 16px -12px rgba(17,24,32,.2);margin-bottom:10px;">
+      <div style="width:42px;height:42px;border-radius:11px;background:#f2f2f2;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${I.doc}</div>
+      <div style="flex:1;"><div style="font-size:15px;font-weight:600;color:#111820;">${esc(r.title)}</div><div style="font-size:13px;color:#8d8d8d;margin-top:2px;">${esc(r.type)}</div></div>
+      ${I.download}
+    </div>`).join("");
+
+  return `<div class="screen" style="background:#f2f2f2;">
+    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 20px;display:flex;align-items:center;gap:14px;">
+      <div onclick="app.backHome()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);flex-shrink:0;">${I.back}</div>
+      <div>
+        <div style="font-size:13px;color:#8d8d8d;font-weight:500;">LIBRARY</div>
+        <div class="serif" style="font-size:28px;font-weight:600;letter-spacing:-.5px;margin-top:2px;">Resources</div>
+      </div>
+    </div>
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 calc(30px + env(safe-area-inset-bottom));overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
+      ${featured}
+      <div style="padding:0 22px;margin-top:26px;">
+        <div class="serif" style="font-size:19px;font-weight:600;margin-bottom:12px;color:#111820;">All resources</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">${rows||emptyRow("No resources yet")}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+SCREENS.resources = resourcesScreen;
+</script>
