@@ -27,7 +27,7 @@ const EVENT_MENTORS = 'Mentors only';
 function adminDoGet_() {
   return HtmlService.createTemplateFromFile('Admin')
     .evaluate()
-    .setTitle('SCU Small Group · Admin')
+    .setTitle('SSG Internal Tools')
     .setFaviconUrl('https://lh3.googleusercontent.com/d/17-3NVNtoneKapt_mJMzMXEK7EVuRC_RE#.png')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
