@@ -78,7 +78,7 @@ function resumeSession(token) {
     return {
       success: true,
       user: buildUserObj_(currentUser, session.email),
-      data: getData(session.email, currentUser, { lean: true })
+      data: getData(session.email, currentUser)
     };
   } catch (error) {
     return { success: false, message: error.message };
@@ -106,7 +106,7 @@ function buildUserObj_(currentUser, cleanEmail) {
     name: name,
     initials: getInitials(name),
     groupId: String(currentUser.groupId || ""),
-    groupName: String(currentUser.groupName || currentUser.groupId || "Life Group"),
+    groupName: String(currentUser.groupName || currentUser.groupId || "Small Group"),
     role: String(currentUser.role || "Member"),
     phone: String(currentUser.phone || ""),
     birthday: formatBirthday_(currentUser.birthday),
@@ -173,7 +173,7 @@ function verifyLogin(email, password) {
       success: true,
       user: buildUserObj_(currentUser, cleanEmail),
       token: createSession_(cleanEmail),
-      data: getData(cleanEmail, currentUser, { lean: true })
+      data: getData(cleanEmail, currentUser)
     };
   } catch (error) {
     throw new Error("Login verification failed: " + error.message);
@@ -191,7 +191,7 @@ function findUsersColumns_(headerRow) {
 function updateUserProfile(payload) {
   try {
     if (payload.oldEmail) setSessionEmail(payload.oldEmail);
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = ss_();
     const sheet = ss.getSheetByName("Users");
     if (!sheet) return { success: false, message: "Users sheet not found" };
 
@@ -237,17 +237,11 @@ function updateUserProfile(payload) {
 }
 
 /* getData(email) returns the whole payload and is what refreshData() on the
-   client calls, so its shape must stay complete.
-
-   opts.lean skips the four expensive pieces — the Reflections and
-   ReflectionReplies full-sheet reads, the notification derivation built on top
-   of them, and Posts — and returns empty values in their place. Sign-in and
-   session resume use it to paint Home immediately, then call getExtendedData
-   for exactly those four keys. Every screen that reads them already guards
-   with `|| []`, so the gap between the two calls renders cleanly. */
-function getData(userEmail, currentUserRow, opts) {
+   client calls, so its shape must stay complete. Sign-in and session resume
+   also call it directly (full, not partial) so Home never renders with a
+   notification count that then jumps once a background fetch lands. */
+function getData(userEmail, currentUserRow) {
   try {
-    const lean = !!(opts && opts.lean);
     if (userEmail) setSessionEmail(userEmail);
     const users = readSheetAsMap('Users');
     let currentUser = null;
@@ -265,15 +259,20 @@ function getData(userEmail, currentUserRow, opts) {
     const events = readSheetAsMap('Events');
     const rawResources = readSheetAsMap('Resources');
     const pulseConfig = readSheetAsMap('Pulse')[0] || {};
-    const posts = lean ? [] : readSheetAsMap('Posts');
+    const posts = readSheetAsMap('Posts');
+    // readSheetAsMap returns [] for a tab that does not exist yet, so a Reactions
+    // sheet that has never been written to reads as "nobody has reacted".
+    const reactions = readSheetAsMap(REACTIONS_SHEET);
     const rawAnnouncements = readSheetAsMap('Announcements');
     const pulseResponses = readSheetAsMap('PulseResponses');
 
-    const hasSubmittedPulse = pulseResponses.some(r => 
+    const reactionsByPost = aggregateReactions_(reactions, currentUser.userId);
+
+    const hasSubmittedPulse = pulseResponses.some(r =>
       String(r.userId || r.userid || '').trim() === String(currentUser.userId || '').trim()
     );
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = ss_();
 
     const userMap = {};
     users.forEach(u => {
@@ -281,7 +280,7 @@ function getData(userEmail, currentUserRow, opts) {
     });
     
     // Fetch Reflection Replies with dynamic user lookup based on userId
-    const repliesSheet = lean ? null : ss.getSheetByName('ReflectionReplies');
+    const repliesSheet = ss.getSheetByName('ReflectionReplies');
     const repliesData = repliesSheet ? repliesSheet.getDataRange().getValues() : [];
     const allReplies = [];
     if (repliesData.length > 1) {
@@ -326,7 +325,7 @@ function getData(userEmail, currentUserRow, opts) {
     }
 
     // Fetch Reflections
-    const refSheet = lean ? null : ss.getSheetByName('Reflections');
+    const refSheet = ss.getSheetByName('Reflections');
     const refData = refSheet ? refSheet.getDataRange().getValues() : [];
     const reflections = [];
     
@@ -387,7 +386,7 @@ function getData(userEmail, currentUserRow, opts) {
 
     // Built here, while `reflections` is still in feed order — the return statement below
     // reverses that array in place.
-    const notifData = lean ? { list: [], unreadCount: 0 } : buildNotifications(currentUser, reflections);
+    const notifData = buildNotifications(currentUser, reflections, posts, reactions, userMap);
 
     const isMentor = String(currentUser.role || "").trim().toLowerCase() === "mentor";
     const currentGroup = groups.find(g => String(g.groupId) === String(currentUser.groupId) || String(g.name) === String(currentUser.groupName)) || {};
@@ -458,11 +457,17 @@ function getData(userEmail, currentUserRow, opts) {
       return true; 
     });
 
+    const attendanceByEvent = readAttendanceSummaries_(String(currentUser.groupId || ""),
+                                                       String(currentUser.userId || ""));
+
     const now = new Date();
     const parsedEvents = groupEvents.map(e => {
       let d = e.date instanceof Date ? e.date : new Date(String(e.date || "") + " " + new Date().getFullYear());
       const slot = buildCalendarSlot(isNaN(d.getTime()) ? null : d, e.time);
+      const eventId = eventKey_(e, currentUser.groupId, slot.startMs);
       return {
+        eventId: eventId,
+        attendance: attendanceByEvent[eventId] || null,
         title: String(e.title || ""),
         dateObj: isNaN(d.getTime()) ? new Date() : d,
         dateStr: !isNaN(d.getTime()) ? Utilities.formatDate(d, Session.getScriptTimeZone(), "EEE, d MMM") : String(e.date || ""),
@@ -475,7 +480,8 @@ function getData(userEmail, currentUserRow, opts) {
         calStart: slot.start,
         calEnd: slot.end,
         calAllDay: slot.allDay,
-        calTz: slot.tz
+        calTz: slot.tz,
+        startMs: slot.startMs
       };
     }).sort((a, b) => a.dateObj - b.dateObj);
 
@@ -486,6 +492,8 @@ function getData(userEmail, currentUserRow, opts) {
     let nextEvent = null;
     if (nextRaw) {
       nextEvent = {
+        eventId: String(nextRaw.eventId || ""),
+        attendance: nextRaw.attendance || null,
         title: String(nextRaw.title),
         date: String(nextRaw.dateStr),
         time: String(nextRaw.time),
@@ -497,7 +505,8 @@ function getData(userEmail, currentUserRow, opts) {
         calStart: String(nextRaw.calStart),
         calEnd: String(nextRaw.calEnd),
         calAllDay: nextRaw.calAllDay === true,
-        calTz: String(nextRaw.calTz)
+        calTz: String(nextRaw.calTz),
+        startMs: Number(nextRaw.startMs || 0)
       };
     }
 
@@ -537,6 +546,9 @@ function getData(userEmail, currentUserRow, opts) {
         church: String(currentUser.church || ""),
         occupation: String(currentUser.occupation || ""),
         role: String(currentUser.role || "Member"),
+        // A mentor's `members`/`group.memberCount` below cover every group, so the
+        // client needs this to pick their own group back out of allGroups.
+        groupId: String(currentUser.groupId || ""),
         greetingDate: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "EEEE, d MMMM")
       },
       serviceUpdate: {
@@ -550,14 +562,18 @@ function getData(userEmail, currentUserRow, opts) {
         text: String(verseData.text || ""),
         ref: String(verseData.reference || "")
       },
-      announcements: rawAnnouncements.map(a => ({
+      announcements: rawAnnouncements.map((a, i) => ({
+        id: "ann_" + i,
         title: String(a.title || a.Title || ""),
         tag: String(a.tag || a.Tag || ""),
         time: String(a.time || a.Time || ""),
-        imgUrl: String(a.imgUrl || a.imageUrl || a.image || a.imageLabel || a['image url'] || a['Image URL'] || "")
+        imgUrl: String(a.imgUrl || a.imageUrl || a.image || a.imageLabel || a['image url'] || a['Image URL'] || ""),
+        detail: String(a.detail || a.Detail || a.description || a.Description || a.body || a.Body || a['full text'] || a['Full Text'] || "")
       })),
       nextEvent: nextEvent,
       events: upcomingList.map(e => ({
+        eventId: String(e.eventId || ""),
+        attendance: e.attendance || null,
         title: String(e.title),
         date: String(e.dateStr),
         time: String(e.time),
@@ -568,10 +584,11 @@ function getData(userEmail, currentUserRow, opts) {
         calStart: String(e.calStart),
         calEnd: String(e.calEnd),
         calAllDay: e.calAllDay === true,
-        calTz: String(e.calTz)
+        calTz: String(e.calTz),
+        startMs: Number(e.startMs || 0)
       })),
       group: {
-        name: String(currentUser.groupName || currentGroup.name || "Life Group"),
+        name: String(currentUser.groupName || currentGroup.name || "Small Group"),
         memberCount: groupMembers.length,
         meets: String(currentGroup.meetsText || ""),
         mentor: { 
@@ -617,41 +634,34 @@ function getData(userEmail, currentUserRow, opts) {
         const authorUser = userMap[p.userId] || {};
         const authorGroup = groups.find(g => String(g.groupId) === String(authorUser.groupId)) || {};
         const authorName = String(authorUser.name || "Unknown");
+        const key = postKey_(p);
+        const agg = reactionsByPost[key] || { counts: { amen: 0, love: 0, praise: 0, hope: 0 }, mine: [] };
         return {
+          id: key,
           author: authorName,
-          group: String(authorGroup.name || "Life Group"),
+          group: String(authorGroup.name || "Small Group"),
           type: String(p.type || "Praise"),
           text: String(p.text || ""),
           time: String(p.time || new Date().toISOString()),
           initials: getInitials(authorName),
           visibility: String(p.visibility || p.Visibility || "Public"),
-          mine: String(p.userId) === String(currentUser.userId)
+          mine: String(p.userId) === String(currentUser.userId),
+          reactions: agg.counts,
+          myReactions: agg.mine
         };
       }).reverse(),
       reflections: reflections.reverse(),
       notifications: notifData.list,
-      notifUnread: notifData.unreadCount
+      notifUnread: notifData.unreadCount,
+      /* The server's clock at the moment this payload was built. The client keeps
+         the difference against its own clock (noteServerClock in Core) so anything
+         timing-gated — the mentor attendance card in Events — is judged against
+         script time rather than whatever the device happens to be set to. */
+      serverNow: new Date().getTime()
     };
   } catch (err) {
     throw new Error("getData failed: " + err.message);
   }
-}
-
-/* Phase two of sign-in: exactly the keys getData's lean mode leaves empty.
-   The client Object.assign()s these onto the DATA it is already showing, so
-   Home appears without waiting on the Reflections and ReflectionReplies
-   sheet reads.
-
-   Deliberately a thin projection of getData rather than its own copy of the
-   parsing — one place stays responsible for the shape of a reflection. */
-function getExtendedData(userEmail) {
-  const full = getData(userEmail);
-  return {
-    reflections: full.reflections,
-    notifications: full.notifications,
-    notifUnread: full.notifUnread,
-    posts: full.posts
-  };
 }
 
 /* ==========================================================================
@@ -667,7 +677,7 @@ const NOTIF_LIMIT = 50;
 const NOTIF_READ_IDS_LIMIT = 200;
 
 function ensureNotificationReadsSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = ss_();
   let sheet = ss.getSheetByName(NOTIF_READS_SHEET);
   if (!sheet) {
     sheet = ss.insertSheet(NOTIF_READS_SHEET);
@@ -677,7 +687,7 @@ function ensureNotificationReadsSheet() {
 }
 
 function getNotificationReadState(userId) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(NOTIF_READS_SHEET);
+  const sheet = ss_().getSheetByName(NOTIF_READS_SHEET);
   const empty = { lastReadAt: "", readIds: [] };
   if (!sheet) return empty;
 
@@ -719,7 +729,7 @@ function isNotificationUnread(notif, readState) {
   return t > cutoff;
 }
 
-function buildNotifications(currentUser, reflections) {
+function buildNotifications(currentUser, reflections, posts, reactions, userMap) {
   const myId = String(currentUser.userId || "").trim();
   const myName = String(currentUser.name || "").trim();
   const mentionToken = ("@" + myName).toLowerCase();
@@ -769,6 +779,45 @@ function buildNotifications(currentUser, reflections) {
     });
   });
 
+  /* Reactions on my own posts. Keyed on (post, actor, type) rather than on the
+     write time — a member can hold several different reactions on the same
+     post at once, so each type they pick is its own notification rather than
+     one row getting rewritten. */
+  const myPosts = {};
+  (posts || []).forEach(p => {
+    if (String(p.userId || "").trim() !== myId) return;
+    myPosts[postKey_(p)] = p;
+  });
+
+  (reactions || []).forEach(rx => {
+    const type = String(rx.type || "").trim().toLowerCase();
+    if (REACTION_TYPES.indexOf(type) === -1) return;
+
+    const key = String(rx.postId || rx.postid || "").trim();
+    const post = myPosts[key];
+    if (!post) return;
+
+    const actorId = String(rx.userId || rx.userid || "").trim();
+    if (!actorId || actorId === myId) return; // your own reaction
+
+    const actor = String(((userMap || {})[actorId] || {}).name || "Someone");
+    const isPraise = String(post.type || "").trim().toLowerCase() === "praise";
+
+    const entry = {
+      id: "rx" + key + "_" + actorId.replace(/[^A-Za-z0-9_]/g, "") + "_" + type,
+      type: "reaction",
+      actor: actor,
+      initials: getInitials(actor),
+      actionText: 'reacted "' + (REACTION_LABELS[type] || type) + '" to your ' + (isPraise ? "praise" : "prayer"),
+      context: String(post.text || "").slice(0, 80),
+      refId: "",
+      postId: key,
+      time: String(rx.timestamp || rx.Timestamp || "")
+    };
+    entry.read = !isNotificationUnread(entry, readState);
+    list.push(entry);
+  });
+
   list.sort((a, b) => {
     const ta = new Date(a.time), tb = new Date(b.time);
     return (isNaN(tb.getTime()) ? 0 : tb) - (isNaN(ta.getTime()) ? 0 : ta);
@@ -804,12 +853,108 @@ function markAllNotificationsRead(payload) {
   return true;
 }
 
+/* ==========================================================================
+   REACTIONS
+   A member can hold several different reactions on the same post at once
+   (Amen *and* Love, say) — tapping one again removes just that one. Stored as
+   its own sheet, one row per (postId, userId, type) triple that is currently
+   active: toggling on appends a row, toggling off deletes it.
+   ========================================================================== */
+
+const REACTIONS_SHEET = 'Reactions';
+const REACTION_TYPES = ['amen', 'love', 'praise', 'hope'];
+
+/* Shown in the notification line; the client owns the on-screen labels and must
+   agree with these. "praise" reads as Agree — the key is what is already stored
+   in the sheet, so it stays put while the label changes. */
+const REACTION_LABELS = { amen: "Amen", love: "Love", praise: "Agree", hope: "Hope" };
+
+function ensureReactionsSheet() {
+  const ss = ss_();
+  let sheet = ss.getSheetByName(REACTIONS_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(REACTIONS_SHEET);
+    sheet.appendRow(['postId', 'userId', 'type', 'timestamp']);
+  }
+  return sheet;
+}
+
+/* The address a reaction is filed under. Posts rows written before the postId
+   column was added carry a blank cell, so fall back to a hash of the row's own
+   content — content-derived rather than positional, so it survives inserts and
+   deletes above the row. readSheetAsMap trims header names but does not
+   lower-case them, hence the spellings. */
+function postKey_(p) {
+  const explicit = String(p.postId || p.postid || p.PostID || "").trim();
+  if (explicit) return explicit.replace(/[^A-Za-z0-9_]/g, "");
+
+  const seed = [p.userId, p.time, String(p.text || "").slice(0, 60)].join("|");
+  let h = 5381;
+  for (let i = 0; i < seed.length; i++) h = ((h * 33) ^ seed.charCodeAt(i)) >>> 0;
+  return "p" + h.toString(36);
+}
+
+/* Counts per post plus every type this viewer has picked, from the raw
+   Reactions rows. Returns { postId: { counts: {amen,love,praise,hope}, mine: [] } }. */
+function aggregateReactions_(reactions, viewerId) {
+  const byPost = {};
+  const me = String(viewerId || "").trim();
+
+  (reactions || []).forEach(r => {
+    const type = String(r.type || "").trim().toLowerCase();
+    if (REACTION_TYPES.indexOf(type) === -1) return;
+
+    const key = String(r.postId || r.postid || "").trim();
+    if (!key) return;
+
+    if (!byPost[key]) byPost[key] = { counts: { amen: 0, love: 0, praise: 0, hope: 0 }, mine: [] };
+    byPost[key].counts[type]++;
+    if (String(r.userId || r.userid || "").trim() === me) byPost[key].mine.push(type);
+  });
+
+  return byPost;
+}
+
+/* payload: { userEmail, postId, type } — toggles that one reaction: added if
+   the member had not picked it yet on this post, removed if they had. Only
+   ever touches the single (post, member, type) row, so any other reactions
+   the member already left on the post are untouched. */
+function saveReaction(payload) {
+  if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
+  const user = getCurrentUserSession();
+
+  const postId = String((payload && payload.postId) || "").trim();
+  if (!postId) throw new Error("Missing postId.");
+
+  const type = String((payload && payload.type) || "").trim().toLowerCase();
+  if (REACTION_TYPES.indexOf(type) === -1) {
+    throw new Error("Unknown reaction: " + type);
+  }
+
+  const sheet = ensureReactionsSheet();
+  const data = sheet.getDataRange().getValues();
+  const now = new Date().toISOString();
+  const myId = String(user.userId).trim();
+
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0] || "").trim() === postId &&
+        String(data[i][1] || "").trim() === myId &&
+        String(data[i][2] || "").trim().toLowerCase() === type) {
+      sheet.deleteRow(i + 1);
+      return false; // now off
+    }
+  }
+
+  sheet.appendRow([postId, user.userId, type, now]);
+  return true; // now on
+}
+
 function saveReflectionReply(payload) {
   if (payload && payload.userEmail) {
     setSessionEmail(payload.userEmail);
   }
   const user = getCurrentUserSession();
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = ss_();
   let sheet = ss.getSheetByName('ReflectionReplies');
   
   if (!sheet) {
@@ -878,7 +1023,7 @@ function getReflectionRowInfo_(refId) {
   const rowIndex = parseInt(String(refId || "").replace("ref_", ""), 10);
   if (!rowIndex || rowIndex < 1) throw new Error("Invalid reflection id: " + refId);
 
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Reflections');
+  const sheet = ss_().getSheetByName('Reflections');
   if (!sheet) throw new Error("Spreadsheet error: Sheet tab named 'Reflections' not found.");
 
   const rowNum = rowIndex + 1;
@@ -903,7 +1048,7 @@ function getReflectionRowInfo_(refId) {
    back to positional "r_row" ids in getData, and deleting rows there would shift
    every id below — so those sheets are refused rather than corrupted. */
 function getReplyRowInfo_(replyId) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('ReflectionReplies');
+  const sheet = ss_().getSheetByName('ReflectionReplies');
   if (!sheet) throw new Error("Spreadsheet error: Sheet tab named 'ReflectionReplies' not found.");
 
   const data = sheet.getDataRange().getValues();
@@ -959,7 +1104,7 @@ function deleteReflection(payload) {
 
   // Replies to a deleted reflection go with it. Bottom-up so each deleteRow does
   // not shift rows still to be visited.
-  const repliesSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('ReflectionReplies');
+  const repliesSheet = ss_().getSheetByName('ReflectionReplies');
   if (repliesSheet && repliesSheet.getLastRow() > 1) {
     const data = repliesSheet.getDataRange().getValues();
     const headers = data[0].map(h => String(h).trim().toLowerCase());
@@ -1001,7 +1146,7 @@ function deleteReply(payload) {
 function saveReflectionWithFile(payload) {
   if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
   const user = getCurrentUserSession();
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = ss_();
   let fileUrl = "", fileName = "";
   
   if (payload.fileData && payload.fileName) {
@@ -1043,7 +1188,7 @@ function saveReflectionWithFile(payload) {
 function savePulse(payload) {
   if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
   const user = getCurrentUserSession();
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = ss_();
   const pulseConfig = readSheetAsMap('Pulse')[0] || {};
   const questionsList = pulseConfig.questions ? String(pulseConfig.questions).split('|').filter(q => q.trim() !== "") : [];
   const openQuestionsList = pulseConfig.open_questions ? String(pulseConfig.open_questions).split('|').filter(q => q.trim() !== "") : [];
@@ -1073,24 +1218,31 @@ function savePulse(payload) {
 
 /* Written by header name rather than position: the Posts sheet is edited by
    hand, so a visibility column may sit anywhere. Falls back to the historic
-   userId | type | text | time | visibility order if the header row is blank. */
+   postId | userId | type | text | time | visibility order if the header row is
+   blank. */
 function savePost(payload) {
   if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
   const user = getCurrentUserSession();
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Posts');
+  const sheet = ss_().getSheetByName('Posts');
 
   // Whitelisted here, never taken verbatim — the client cannot invent a level.
   const raw = String(payload.visibility || "").trim().toLowerCase();
   const vis = raw === "mentor" ? "Mentor" : (raw === "group" ? "Group" : "Public");
 
+  // Random suffix as well as the clock: two members can post in the same
+  // millisecond. Alphanumeric because the client interpolates this id into an
+  // onclick attribute and esc() does not escape quotes.
+  const postId = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
   const values = {
+    postid: postId,
     userid: user.userId,
     type: payload.type,
     text: payload.text,
     time: payload.timestamp || new Date().toISOString(),
     visibility: vis
   };
-  const order = ['userid', 'type', 'text', 'time', 'visibility'];
+  const order = ['postid', 'userid', 'type', 'text', 'time', 'visibility'];
   const width = Math.max(sheet.getLastColumn(), order.length);
   const headers = sheet.getRange(1, 1, 1, width).getValues()[0]
     .map(h => String(h).trim().toLowerCase());
@@ -1098,21 +1250,334 @@ function savePost(payload) {
   const named = headers.some(h => values.hasOwnProperty(h));
   sheet.appendRow(named ? headers.map(h => values.hasOwnProperty(h) ? values[h] : "")
                         : order.map(k => values[k]));
+
+  // The client needs this to react to its own post before the next refresh.
+  return postId;
 }
 
-function saveAttendance(attMarks) {
-  const user = getCurrentUserSession();
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const attendanceHistory = ss.getSheetByName('Attendance');
-  const sessionDate = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
-  
-  if (attendanceHistory) {
-    attendanceHistory.appendRow([user.userId, sessionDate, true]);
+/* Locates a Posts row by its postId. Older rows written before the postId
+   column existed carry a blank cell there, so postKey_ — the same fallback
+   getData already uses to hand those rows an id — is reused here to find
+   them again. Header-name lookup, same reasoning as savePost. */
+function getPostRowInfo_(postId) {
+  const sheet = ss_().getSheetByName('Posts');
+  if (!sheet) throw new Error("Spreadsheet error: Sheet tab named 'Posts' not found.");
+
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) throw new Error("Post not found: " + postId);
+
+  const headers = data[0].map(h => String(h).trim());
+  const lower = headers.map(h => h.toLowerCase());
+  const idx = {
+    userId: lower.indexOf('userid') !== -1 ? lower.indexOf('userid') : 1,
+    type: lower.indexOf('type') !== -1 ? lower.indexOf('type') : 2,
+    text: lower.indexOf('text') !== -1 ? lower.indexOf('text') : 3,
+    visibility: lower.indexOf('visibility') !== -1 ? lower.indexOf('visibility') : 5
+  };
+
+  for (let i = 1; i < data.length; i++) {
+    const rowObj = {};
+    headers.forEach((h, ci) => { if (h) rowObj[h] = data[i][ci]; });
+    if (postKey_(rowObj) === String(postId).trim()) {
+      return { sheet: sheet, rowNum: i + 1, idx: idx, values: data[i] };
+    }
   }
+  throw new Error("Post not found: " + postId);
+}
+
+function updatePost(payload) {
+  if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
+  const user = getCurrentUserSession();
+  const info = getPostRowInfo_(payload.postId);
+
+  assertOwner_(info.values[info.idx.userId], user.userId);
+
+  const raw = String(payload.visibility || "").trim().toLowerCase();
+  const vis = raw === "mentor" ? "Mentor" : (raw === "group" ? "Group" : "Public");
+
+  info.sheet.getRange(info.rowNum, info.idx.type + 1).setValue(payload.type || "Praise");
+  info.sheet.getRange(info.rowNum, info.idx.text + 1).setValue(payload.text);
+  info.sheet.getRange(info.rowNum, info.idx.visibility + 1).setValue(vis);
+
+  return true;
+}
+
+/* Unlike Reflections, a post's id is not tied to its row position (postid is
+   an explicit column, or a content hash for legacy rows), so a hard delete
+   here cannot invalidate any other post's id the way it would there. */
+function deletePost(payload) {
+  if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
+  const user = getCurrentUserSession();
+  const info = getPostRowInfo_(payload.postId);
+
+  assertOwner_(info.values[info.idx.userId], user.userId);
+  info.sheet.deleteRow(info.rowNum);
+
+  // Reactions left on a deleted post go with it. Bottom-up so each deleteRow
+  // does not shift rows still to be visited.
+  const reactionsSheet = ss_().getSheetByName(REACTIONS_SHEET);
+  if (reactionsSheet && reactionsSheet.getLastRow() > 1) {
+    const data = reactionsSheet.getDataRange().getValues();
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][0] || "").trim() === String(payload.postId).trim()) {
+        reactionsSheet.deleteRow(i + 1);
+      }
+    }
+  }
+
+  return true;
+}
+
+/* ==========================================================================
+   EVENT ATTENDANCE — one row per member per event, written from the mentor
+   attendance screen (see Attendance.html).
+
+   The Events tab has no id column, so rows are keyed by a derived eventId:
+   the sheet's own eventId cell if that column is ever added, otherwise the
+   group plus the event's start instant. Stable as long as the event's date
+   and time cells stay put.
+   ========================================================================== */
+
+const ATTENDANCE_SHEET = 'Attendance';
+const ATTENDANCE_HEADERS = ['eventId', 'groupId', 'userId', 'status', 'note', 'markedBy', 'timestamp'];
+
+function eventKey_(rawRow, groupId, startMs) {
+  const explicit = String((rawRow && (rawRow.eventId || rawRow.EventID || rawRow['Event ID'])) || "").trim();
+  if (explicit) return explicit;
+  if (!startMs) return "";      // unreadable time cell — nothing stable to key on
+  const stamp = Utilities.formatDate(new Date(Number(startMs)), Session.getScriptTimeZone(), "yyyyMMdd'T'HHmm");
+  return String(groupId || "").trim() + "|" + stamp;
+}
+
+/* Resolves the Attendance tab and its header positions.
+   Creates the tab, or writes the header row onto an empty one. A tab that
+   still holds rows under headers we cannot read is left alone and reported —
+   appending under a mismatched header would scatter data across the wrong
+   columns (the tab's previous shape was userId | date | TRUE). */
+function attendanceSheet_() {
+  const ss = ss_();
+  let sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(ATTENDANCE_SHEET);
+    sheet.appendRow(ATTENDANCE_HEADERS);
+  }
+
+  const seed = () => { sheet.clear(); sheet.appendRow(ATTENDANCE_HEADERS); };
+  if (sheet.getLastRow() === 0) seed();
+
+  let headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0]
+                     .map(h => String(h).trim().toLowerCase());
+  let idx = {};
+  ATTENDANCE_HEADERS.forEach(h => { idx[h] = headers.indexOf(h.toLowerCase()); });
+
+  const missing = ATTENDANCE_HEADERS.filter(h => idx[h] === -1);
+  if (missing.length) {
+    if (sheet.getLastRow() > 1) {
+      throw new Error("The Attendance tab needs these columns in row 1: " +
+                      ATTENDANCE_HEADERS.join(", ") + " (missing: " + missing.join(", ") + ").");
+    }
+    seed();
+    headers = ATTENDANCE_HEADERS.map(h => h.toLowerCase());
+    idx = {};
+    ATTENDANCE_HEADERS.forEach(h => { idx[h] = headers.indexOf(h.toLowerCase()); });
+  }
+
+  return { sheet: sheet, idx: idx, width: headers.length };
+}
+
+/* Writes a handful of cells on one row, batched.
+   `updates` is [{ col, value }] with col 0-based; contiguous columns collapse
+   into a single setValues, so a member whose status, note and audit stamp all
+   move costs one range write under the default header order rather than four. */
+function writeRowCells_(sheet, rowNum, updates) {
+  if (!updates.length) return;
+  const sorted = updates.slice().sort((a, b) => a.col - b.col);
+
+  let run = [sorted[0]];
+  const flush = () => {
+    sheet.getRange(rowNum, run[0].col + 1, 1, run.length)
+         .setValues([run.map(u => u.value)]);
+  };
+
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].col === run[run.length - 1].col + 1) run.push(sorted[i]);
+    else { flush(); run = [sorted[i]]; }
+  }
+  flush();
+}
+
+/* { eventId: { recorded, present, absent, total, myStatus } } for one group.
+   myStatus is how this caller themselves was marked, which is all a member is
+   shown of an event's attendance (see memberAttendanceCard in Events); it stays
+   empty when no row in that event belongs to them.
+
+   Anything unreadable — no tab, legacy headers — reads as "nobody has taken
+   attendance yet", which is exactly how the client should behave in that case. */
+function readAttendanceSummaries_(groupId, userId) {
+  const rows = readSheetAsMap(ATTENDANCE_SHEET);
+  const me = String(userId || "").trim();
+  const byEvent = {};
+  rows.forEach(r => {
+    const eventId = String(r.eventId || "").trim();
+    if (!eventId) return;
+    if (groupId && String(r.groupId || "").trim() !== String(groupId).trim()) return;
+
+    const bucket = byEvent[eventId] ||
+                   (byEvent[eventId] = { recorded: true, present: 0, absent: 0, total: 0, myStatus: "" });
+    const status = String(r.status || "").trim().toLowerCase() === "present" ? "present" : "absent";
+    status === "present" ? bucket.present++ : bucket.absent++;
+    bucket.total++;
+
+    if (me && String(r.userId || "").trim() === me) bucket.myStatus = status;
+  });
+  return byEvent;
+}
+
+/* The saved record for one event, member by member — what the edit mode of the
+   attendance screen prefills itself from. Payload: { userEmail, eventId }.
+
+   Fetched on demand rather than carried on every getData: only a mentor opening
+   this one screen ever needs it, and getData runs on every navigation.
+
+   savedAt is the newest timestamp across the event's rows; one save stamps all
+   of its rows alike, so it reads as "when this record was written". */
+function getEventAttendance(payload) {
+  if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
+  const user = getCurrentUserSession();
+
+  if (String(user.role || "").trim().toLowerCase() !== "mentor") {
+    throw new Error("Only a mentor can open a saved attendance record.");
+  }
+
+  const eventId = String((payload && payload.eventId) || "").trim();
+  const groupId = String(user.groupId || "").trim();
+  const empty = { recorded: false, savedAt: "", marks: [] };
+  if (!eventId) return empty;
+
+  const marks = [];
+  let savedAt = "";
+  readSheetAsMap(ATTENDANCE_SHEET).forEach(r => {
+    if (String(r.eventId || "").trim() !== eventId) return;
+    if (groupId && String(r.groupId || "").trim() !== groupId) return;
+
+    marks.push({
+      userId: String(r.userId || ""),
+      status: String(r.status || "").trim().toLowerCase() === "present" ? "present" : "absent",
+      note: String(r.note || "")
+    });
+
+    const stamp = r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp || "");
+    if (stamp > savedAt) savedAt = stamp;
+  });
+
+  if (!marks.length) return empty;
+  return { recorded: true, savedAt: savedAt, marks: marks };
+}
+
+/* Reconciles the event's rows against the roster it is handed: a member whose
+   status and note both still match is left completely alone, one who moved has
+   only those cells rewritten, a new one is appended, and a row belonging to
+   nobody on the roster any more is dropped. An edit that changed one member
+   therefore touches one row, and a save with nothing to do writes nothing —
+   the previous delete-every-row-and-re-append restamped the whole group.
+
+   `marks` must be the full roster, not just what changed: rows are dropped by
+   their absence from it. Payload:
+   { userEmail, eventId, marks: [{ userId, status, note }] } */
+function saveEventAttendance(payload) {
+  if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
+  const user = getCurrentUserSession();
+
+  if (String(user.role || "").trim().toLowerCase() !== "mentor") {
+    throw new Error("Only a mentor can record attendance.");
+  }
+
+  const eventId = String((payload && payload.eventId) || "").trim();
+  if (!eventId) throw new Error("This event has no usable date and time, so attendance cannot be saved against it.");
+
+  const marks = (payload && payload.marks) || [];
+  if (!marks.length) throw new Error("No members to record.");
+
+  const groupId = String(user.groupId || "").trim();
+  const { sheet, idx, width } = attendanceSheet_();
+
+  /* The event's rows as they stand, by member. Anything past the first row for
+     one member is a leftover from an older double-write and goes on the drop
+     list. Another group's rows are never in scope, even where the two share an
+     explicit eventId. */
+  const byUser = {};
+  const drop = [];
+  if (sheet.getLastRow() > 1) {
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (String(row[idx.eventId] || "").trim() !== eventId) continue;
+      if (groupId && String(row[idx.groupId] || "").trim() !== groupId) continue;
+
+      const uid = String(row[idx.userId] || "").trim();
+      if (byUser[uid]) { drop.push(i + 1); continue; }
+      byUser[uid] = {
+        rowNum: i + 1,
+        status: String(row[idx.status] || "").trim().toLowerCase() === "present" ? "present" : "absent",
+        note: String(row[idx.note] || "")
+      };
+    }
+  }
+
+  const stamp = new Date().toISOString();
+  const seen = {};
+  const append = [];
+  let touched = 0, present = 0, absent = 0;
+
+  marks.forEach(m => {
+    const uid    = String(m.userId || "");
+    const status = String(m.status || "").trim().toLowerCase() === "present" ? "present" : "absent";
+    const note   = String(m.note || "");
+    status === "present" ? present++ : absent++;
+    seen[uid.trim()] = true;
+
+    const prev = byUser[uid.trim()];
+    if (!prev) {
+      const row = new Array(width).fill("");
+      row[idx.eventId]   = eventId;
+      row[idx.groupId]   = groupId;
+      row[idx.userId]    = uid;
+      row[idx.status]    = status;
+      row[idx.note]      = note;
+      row[idx.markedBy]  = String(user.userId || "");
+      row[idx.timestamp] = stamp;
+      append.push(row);
+      return;
+    }
+
+    const updates = [];
+    if (prev.status !== status) updates.push({ col: idx.status, value: status });
+    if (prev.note !== note)     updates.push({ col: idx.note,   value: note });
+    if (!updates.length) return;          // unchanged — leave the row untouched
+
+    // The row did move, so it carries who moved it and when.
+    updates.push({ col: idx.markedBy,  value: String(user.userId || "") });
+    updates.push({ col: idx.timestamp, value: stamp });
+    writeRowCells_(sheet, prev.rowNum, updates);
+    touched++;
+  });
+
+  // Members who have since left the group, plus the duplicates found above.
+  Object.keys(byUser).forEach(uid => { if (!seen[uid]) drop.push(byUser[uid].rowNum); });
+
+  // Bottom-up so each deleteRow does not shift rows still to be visited.
+  drop.sort((a, b) => b - a).forEach(rowNum => sheet.deleteRow(rowNum));
+
+  if (append.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, append.length, width).setValues(append);
+  }
+
+  return { recorded: true, present: present, absent: absent, total: present + absent,
+           changed: touched + append.length + drop.length };
 }
 
 function readSheetAsMap(sheetName) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  const sheet = ss_().getSheetByName(sheetName);
   if(!sheet) return [];
   const data = sheet.getDataRange().getValues();
   if (data.length < 2) return [];
@@ -1130,7 +1595,8 @@ function doGet(e) {
   try {
     return HtmlService.createTemplateFromFile('Index')
       .evaluate()
-      .setTitle('Life Group App')
+      .setTitle('Small Group')
+      .setFaviconUrl('https://lh3.googleusercontent.com/d/17-3NVNtoneKapt_mJMzMXEK7EVuRC_RE#.png')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   } catch (error) {
@@ -1144,10 +1610,15 @@ function doGet(e) {
  * Emitted as local wall-clock time, with the script timezone alongside it so
  * the client can pass ctz and skip any UTC conversion. A time cell that can't
  * be read falls back to an all-day slot on the event's date.
+ *
+ * startMs is the same instant as `start`, but as epoch milliseconds — the only
+ * form the client can compare against a clock (the strings above are wall-clock
+ * text with no timezone in them). 0 means "no usable start", which is how the
+ * mentor attendance card in Events decides to stay hidden.
  */
 function buildCalendarSlot(dateObj, timeRaw) {
   const tz = Session.getScriptTimeZone();
-  if (!dateObj || isNaN(dateObj.getTime())) return { start: "", end: "", allDay: false, tz: tz };
+  if (!dateObj || isNaN(dateObj.getTime())) return { start: "", end: "", allDay: false, tz: tz, startMs: 0 };
 
   let h = null, m = 0;
   if (timeRaw instanceof Date) {                 // sheet cell formatted as a time
@@ -1170,7 +1641,7 @@ function buildCalendarSlot(dateObj, timeRaw) {
     return {
       start: Utilities.formatDate(start, tz, "yyyyMMdd"),
       end: Utilities.formatDate(endDay, tz, "yyyyMMdd"),
-      allDay: true, tz: tz
+      allDay: true, tz: tz, startMs: start.getTime()
     };
   }
   start.setHours(h, m, 0, 0);
@@ -1178,7 +1649,7 @@ function buildCalendarSlot(dateObj, timeRaw) {
   return {
     start: Utilities.formatDate(start, tz, "yyyyMMdd'T'HHmmss"),
     end: Utilities.formatDate(end, tz, "yyyyMMdd'T'HHmmss"),
-    allDay: false, tz: tz
+    allDay: false, tz: tz, startMs: start.getTime()
   };
 }
 
@@ -1206,3 +1677,4 @@ function getNextEventLabel(eventDateObj) {
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
+//check push again

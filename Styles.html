@@ -1,26 +1,66 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
 
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-font-smoothing:antialiased;}
+  :root{
+    /* Kept in sync with the current screen by render() in Core (see the comment
+       there) — "255 255 255" is #ffffff, the color almost every top bar uses now. */
+    --bg-status-rgb: 255 255 255;
+  }
   html, body {
     width: 100%;
     height: 100%;
-    background: #111820;
+    /* Matches the white every screen but welcome/login/pulseDone/profileEdit uses
+       (see render()'s theme-color switch in Core) — this is what shows through on
+       iOS Safari's elastic overscroll bounce and behind the safe-area inset, so it
+       should read as a continuation of whatever screen is on top, not a mismatched
+       color. */
+    background: #ffffff;
     color: #111820;
-    overflow: hidden;
+    overflow-x: hidden;
+    /* Not `hidden` — Safari only tints its status bar/toolbar with theme-color
+       once the *document* has been scrolled at all; at scrollY 0 it shows its
+       own default bar regardless of theme-color. lockStatusBarScroll() in Core
+       nudges this a few px on load to trigger that, permanently. #app is
+       `position:fixed` (below) so none of this is visible — it never moves. */
+    overflow-y: auto;
   }
   body{
-    font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    font-family:'Geist',"Helvetica Neue",Helvetica,Arial,sans-serif;
+    /* A few px taller than the viewport so there is something for
+       lockStatusBarScroll() to actually scroll to. */
+    min-height: calc(100% + 4px);
+  }
+  /* iOS's black-translucent status bar isn't painted by us at all — it's a hole
+     that shows whatever page content is scrolled underneath it, which is why a
+     header color change or a scroll bounce can leave a visible seam (or, worse,
+     the notch/Dynamic Island area rendering as a plain black bar) right at the
+     status bar boundary. This paints a matching strip over exactly the true
+     status bar region (env(safe-area-inset-top) — the actual notch/island
+     height on the device), tinted opaque to the current screen's color
+     (--bg-status-rgb, updated by render() in Core), so it reads as one
+     continuous surface with the header directly beneath it instead of a seam.
+     (An earlier version of this rule tried to fake the coverage with a
+     negative top + overflow:hidden clip, but the math left the whole strip
+     positioned above y=0 — genuinely 0px of it ever painted anything.) */
+  .statusbar{
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: env(safe-area-inset-top, 44px);
+    z-index: 100;
+    pointer-events: none;
+    background-color: rgb(var(--bg-status-rgb) / 1);
+    transition: background-color .15s ease;
   }
   a{color:#2563eb;text-decoration:none;}
   a:hover{color:#1d4ed8;}
   input,textarea,button{font-family:inherit;}
   input:focus,textarea:focus{outline:none;}
   button{border:none;background:none;cursor:pointer;}
-  .serif{font-family:'Source Serif 4',Georgia,serif;}
+  .serif{font-family:'Geist',"Helvetica Neue",Helvetica,Arial,sans-serif;}
   .scr::-webkit-scrollbar{width:0;height:0;}
 
   /* Material Symbols — the web-font equivalent of CardService IconImage/MaterialIcon.
@@ -43,13 +83,16 @@
   }
 
   #app{
-    position: absolute;
+    /* fixed, not absolute — the html/body scroll lock in lockStatusBarScroll()
+       (Core) moves the document by a few px on load, and an absolutely
+       positioned box would shift by that same amount. Fixed never moves. */
+    position: fixed;
     top: 0; bottom: 0;
     left: 50%;
     transform: translateX(-50%);
     width: 100%;
-    max-width: 428px; 
-    background: #f2f2f2;
+    max-width: 428px;
+    background: #f4f6f9;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -67,6 +110,13 @@
   @keyframes sheetUp{from{transform:translateY(100%);}to{transform:translateY(0);}}
   @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
   @keyframes pulseAnim{0%{opacity:0.4;}50%{opacity:1;}100%{opacity:0.4;}}
+  @keyframes fabRotateOpen{from{transform:rotate(0deg);}to{transform:rotate(45deg);}}
+  /* The mirror of fabRotateOpen, played on the render where a FAB just closed
+     (see fabIconAnim() in Core) — without it the "x" snapped straight back to
+     "+" with no motion, since a freshly-closed render is otherwise unanimated
+     like every other sheet in this app. */
+  @keyframes fabRotateClose{from{transform:rotate(45deg);}to{transform:rotate(0deg);}}
+  @keyframes fabMenuIn{from{opacity:0;transform:scale(.85) translateY(8px);}to{opacity:1;transform:scale(1) translateY(0);}}
 
   .sheet-backdrop{
     position: absolute;
@@ -79,8 +129,17 @@
     justify-content: flex-end;
   }
   .sheet{background:#ffffff;border-radius:26px 26px 0 0;padding:10px 22px 30px;animation:sheetUp .28s cubic-bezier(.2,.8,.2,1);}
-  /* A sheet that was already open before this render — see overlayAnim() in Core. */
-  .sheet-backdrop.no-anim, .sheet.no-anim{animation:none;}
+  .fab-icon-rotate{animation:fabRotateOpen .2s cubic-bezier(.2,.8,.2,1) forwards;transform-origin:center;}
+  .fab-icon-close{animation:fabRotateClose .22s cubic-bezier(.2,.8,.2,1) forwards;transform-origin:center;}
+  .fab-menu{animation:fabMenuIn .18s cubic-bezier(.2,.8,.2,1);transform-origin:bottom right;}
+  /* A sheet (or FAB menu) that was already open before this render — see overlayAnim() in Core. */
+  .sheet-backdrop.no-anim, .sheet.no-anim, .fab-icon-rotate.no-anim, .fab-menu.no-anim{animation:none;}
+
+  /* Tap feedback for circular header icon buttons (back/info/etc.) — a quick,
+     smooth press so the button itself feels responsive even though sheets in
+     this app open with no other transition on the trigger. */
+  .icon-btn{transition:transform .15s cubic-bezier(.2,.8,.2,1), background-color .15s ease;}
+  .icon-btn:active{transform:scale(.9);background-color:#e9edf2 !important;}
   .grab{width:40px;height:5px;border-radius:100px;background:#8d8d8d;opacity:0.3;margin:0 auto 16px;}
   
   .spinner {
@@ -99,15 +158,29 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Skeleton placeholders for the gap between the lean sign-in payload and the
-     extended keys — see skeletonList() in Core. */
-  .sk-card{
-    background:#ffffff;border-radius:20px;padding:18px 20px;margin-bottom:14px;
-    border:1px solid #d1d1d1;box-shadow:0 4px 16px -12px rgba(17,24,32,.15);
-    animation:pulseAnim 1.4s infinite ease-in-out;
+  /* First-time reaction: the tapped icon "flies" from the tap point to the new
+     chip that just appeared in the post's reaction bar, then that chip pops
+     (see flyReactionIcon in Community). Removed from the DOM once it lands. */
+  .rx-fly{
+    position:fixed;
+    top:0; left:0;
+    z-index:200;
+    pointer-events:none;
+    transform-origin:center;
+    transition:transform .55s cubic-bezier(.2,.8,.2,1), opacity .4s ease .2s;
+    will-change:transform,opacity;
   }
-  .sk-bar{background:#e6e6e6;border-radius:6px;height:11px;}
-  .sk-avatar{width:44px;height:44px;border-radius:50%;background:#e6e6e6;flex-shrink:0;}
+  @keyframes rxPop{
+    0%{transform:scale(1);}
+    45%{transform:scale(1.35);}
+    100%{transform:scale(1);}
+  }
+  .rx-pop{animation:rxPop .4s cubic-bezier(.2,.8,.2,1);}
+
+  /* Add-reaction button: highlight on hover (desktop) and hold (touch, via
+     :active) so it reads as tappable before the picker opens. */
+  .rx-add-btn{transition:background-color .15s ease, border-color .15s ease;}
+  .rx-add-btn:hover, .rx-add-btn:active{background-color:#e4e4e4;border-color:#c7c7c7;}
 
   #ptr-indicator {
     position: absolute;

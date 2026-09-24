@@ -95,6 +95,15 @@ function welcomeScreen(){
   </div>`;
 }
 
+function restoringScreen(){
+  const T = ATHEME;
+  return `<div class="screen" style="background-color:${T.navy};background-image:url('${A_BG}');background-position:center top;background-size:cover;background-repeat:no-repeat;display:flex;flex-direction:column;justify-content:flex-end;padding:0 34px calc(46px + env(safe-area-inset-bottom));">
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;color:#ffffff;">
+    </div>
+    <div style="text-align:center;font-size:15px;font-weight:500;color:rgba(255,255,255,.85);">Signing you in…</div>
+  </div>`;
+}
+
 /* ------------------------------------------------------------------ LOGIN */
 function loginScreen(){
   const T = ATHEME;
@@ -108,8 +117,8 @@ function loginScreen(){
 
   const slide = S._loginAnim ? `animation:slideInRight .5s ${A_EASE};` : "";
 
-  const html = `<div class="screen" style="overflow:hidden;background:#F3F4F8;">
-    <div class="acc-anim" style="position:absolute;inset:0;display:flex;flex-direction:column;padding:0 34px;background:#F3F4F8;color:${T.navy};${slide}">
+  const html = `<div class="screen" style="overflow:hidden;background:#f4f6f9;">
+    <div class="acc-anim" style="position:absolute;inset:0;display:flex;flex-direction:column;padding:0 34px;background:#f4f6f9;color:${T.navy};${slide}">
 
       <div onclick="uiClick(); go('welcome')" style="position:absolute;top:calc(20px + env(safe-area-inset-top));left:24px;cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(5,28,44,.4);z-index:2;">${PROFILE_ICONS.back}</div>
 
@@ -119,9 +128,9 @@ function loginScreen(){
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 6c-2-2-5-2-7-1v13c2-1 5-1 7 1 2-2 5-2 7-1V5c-2-1-5-1-7 1"></path></svg>
         </div>
 
-        <div style="font-family:'Source Serif 4',Georgia,serif;font-size:34px;font-weight:600;line-height:1.1;letter-spacing:-.5px;color:${T.navy};${riseIn(".12")}">Welcome back</div>
+        <div style="font-family:'Geist','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:34px;font-weight:600;line-height:1.1;letter-spacing:-.5px;color:${T.navy};${riseIn(".12")}">Welcome back</div>
 
-        <div style="font-size:16px;color:#5b6b86;margin-top:10px;${riseIn(".18")}">Sign in to your Life Group</div>
+        <div style="font-size:16px;color:#5b6b86;margin-top:10px;${riseIn(".18")}">Sign in to SCU Small Group</div>
 
         <div style="margin-top:38px;display:flex;flex-direction:column;gap:16px;${riseIn(".24")}">
           <div>
@@ -168,23 +177,22 @@ function profileScreen() {
   if (!DATA) return `<div class="screen"></div>`;
   const u = DATA.user;
   const email = S.currentUserEmail || u.email || "user@example.com";
-  const groupName = DATA.group ? DATA.group.name : "Life Group";
+  const groupName = DATA.group ? DATA.group.name : "Small Group";
   const role = u.role || "Member";
   const userInitials = getInitials(u.name);
 
-  return `<div class="screen scr" style="flex: 1; overflow-y: auto; padding: 0 0 72px; background: #f4f6f9; width: 100%; height: 100%;">
-    <!-- header -->
-    <div style="padding:calc(20px + env(safe-area-inset-top)) 22px 6px;">
-      <div style="font-family:'Source Serif 4',Georgia,serif;font-size:34px;font-weight:600;letter-spacing:-.6px;color:#112378;">Profile</div>
-      <div style="font-size:15px;color:#8b98ac;margin-top:3px;">Your account &amp; details</div>
-    </div>
+  return `<div class="screen" style="background:#ffffff;">
+    <div id="scrollable-container" class="scr fill" style="flex:1;min-height:0;overflow-y:auto;background:#f4f6f9;">
+    <!-- header (kept consistent with Home: white bar, no title) -->
+    <div style="background:#ffffff;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;"></div>
 
+    <div style="padding:20px 0 72px;border-radius:24px 24px 0 0;background:#f4f6f9;">
     <!-- name card -->
-    <div style="padding:0 22px;margin-top:16px;">
+    <div style="padding:0 22px;">
       <div style="background:#fff;border-radius:22px;padding:22px 20px;box-shadow:0 10px 30px -18px rgba(5,28,44,.4);display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
-        <div style="width:88px;height:88px;border-radius:50%;background:#2f76f4;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Source Serif 4',Georgia,serif;font-size:32px;font-weight:600;box-shadow:0 14px 30px -12px rgba(47,118,244,.7);">${esc(userInitials)}</div>
+        <div style="width:88px;height:88px;border-radius:50%;background:#2f76f4;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Geist','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:32px;font-weight:600;box-shadow:0 14px 30px -12px rgba(47,118,244,.7);">${esc(userInitials)}</div>
         <div style="width:100%;">
-          <div style="font-family:'Source Serif 4',Georgia,serif;font-size:24px;font-weight:600;letter-spacing:-.3px;color:#333d4a;">${esc(u.name)}</div>
+          <div style="font-family:'Geist','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:24px;font-weight:600;letter-spacing:-.3px;color:#333d4a;">${esc(u.name)}</div>
           <div style="display:inline-flex;align-items:center;gap:6px;margin-top:9px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#2f76f4;background:#cae7ff;padding:6px 13px;border-radius:100px;">${esc(role)} · ${esc(groupName)}</div>
         </div>
       </div>
@@ -224,6 +232,8 @@ function profileScreen() {
       </div>
       <div style="text-align:center;font-size:12px;color:#94a3af;margin-top:14px;">GKISCUMMERCAMP UNIVERSITY (SCU)</div>
     </div>
+    </div>
+    </div>
   </div>`;
 }
 
@@ -245,19 +255,19 @@ function profileEditScreen() {
   const u = DATA.user;
   const userInitials = getInitials(S.editName || u.name);
 
-  return `<div class="screen scr" style="flex: 1; overflow-y: auto; padding: 0 0 72px; background: #f4f6f9; width: 100%; height: 100%;">
+  return `<div id="scrollable-container" class="screen scr" style="flex: 1; overflow-y: auto; padding: 0 0 72px; background: #f4f6f9; width: 100%; height: 100%;">
     <!-- header -->
-    <div style="padding:calc(26px + env(safe-area-inset-top)) 22px 6px; display:flex; align-items:center; gap:14px;">
+    <div style="padding:calc(16px + env(safe-area-inset-top)) 22px 16px; display:flex; align-items:center; gap:14px;">
       <div onclick="uiClick(); app.backProfile()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(5,28,44,.4); transition:background .2s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='#ffffff'">${PROFILE_ICONS.back}</div>
-      <div style="font-family:'Source Serif 4',Georgia,serif;font-size:24px;font-weight:600;letter-spacing:-.4px;color:#112378;">Edit details</div>
+      <div style="font-family:'Geist','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;letter-spacing:-.4px;color:#2b2b2b;">Edit details</div>
     </div>
 
     <!-- name card -->
-    <div style="padding:0 22px;margin-top:16px;">
+    <div style="padding:0 22px;margin-top:6px;">
       <div style="background:#fff;border-radius:22px;padding:22px 20px;box-shadow:0 10px 30px -18px rgba(5,28,44,.4);display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;">
-        <div style="width:88px;height:88px;border-radius:50%;background:#2f76f4;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Source Serif 4',Georgia,serif;font-size:32px;font-weight:600;box-shadow:0 14px 30px -12px rgba(47,118,244,.7);">${esc(userInitials)}</div>
+        <div style="width:88px;height:88px;border-radius:50%;background:#2f76f4;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Geist','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:32px;font-weight:600;box-shadow:0 14px 30px -12px rgba(47,118,244,.7);">${esc(userInitials)}</div>
         <div style="width:100%;">
-          <input class="acc-input" id="editNameInput" value="${esc(S.editName)}" oninput="S.editName=this.value" placeholder="Your name" style="width:100%;min-width:0;border:none;background:transparent;padding:0;text-align:center;font-family:'Source Serif 4',Georgia,serif;font-size:24px;font-weight:600;letter-spacing:-.3px;color:#333d4a;outline:none;">
+          <input class="acc-input" id="editNameInput" value="${esc(S.editName)}" oninput="S.editName=this.value" placeholder="Your name" style="width:100%;min-width:0;border:none;background:transparent;padding:0;text-align:center;font-family:'Geist','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:24px;font-weight:600;letter-spacing:-.3px;color:#333d4a;outline:none;">
         </div>
       </div>
     </div>
@@ -291,6 +301,7 @@ function profileEditScreen() {
   </div>`;
 }
 
+SCREENS.restoring   = restoringScreen;
 SCREENS.welcome     = welcomeScreen;
 SCREENS.login       = loginScreen;
 SCREENS.profile     = profileScreen;
@@ -315,7 +326,8 @@ Object.assign(window.app, {
     S.isSigningIn = true;
     render();
 
-    // 1. FAST FETCH: verify credentials, load core Home data
+    // Verify credentials and load the full Home payload (including
+    // notifications) in one call, so Home never renders before they're ready.
     google.script.run
       .withSuccessHandler((res) => {
         S.isSigningIn = false;
@@ -333,19 +345,8 @@ Object.assign(window.app, {
           if (res.token) saveToken(res.token);
 
           DATA = res.data;
-          go("home");
-
-          // 2. BACKGROUND FETCH: pull the heavier sheet data behind the Home screen
-          if (typeof google !== "undefined" && google.script && google.script.run) {
-            google.script.run
-              .withSuccessHandler((extendedData) => {
-                if (extendedData) {
-                  Object.assign(DATA, extendedData);
-                  render();
-                }
-              })
-              .getExtendedData(res.user.email);
-          }
+          noteServerClock(res.data);
+          go("home", { skipRefresh: true });
 
         } else {
           alert(res.message || "Invalid email or password.");
@@ -360,7 +361,7 @@ Object.assign(window.app, {
       .verifyLogin(email, password);
   },
 
-  forgotPassword: () => alert("Please contact your Life Group leader to reset your password."),
+  forgotPassword: () => alert("Please contact your Small Group mentor to reset your password."),
 
   logout: () => {
     if (typeof google !== "undefined" && google.script && google.script.run) {

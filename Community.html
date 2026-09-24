@@ -4,12 +4,173 @@
    bottom sheet for posting a new praise or prayer request.
    ========================================================================== */
 
-function getCommunityPostsHTML(query) {
-  // Posts arrive in the second phase of sign-in, so an empty list while that is
-  // in flight is "not fetched yet", not "no posts". Guarded here rather than in
-  // communityScreen so the search re-render (onCommunitySearch) is covered too.
-  if (S.isLoadingExtended && !(DATA.posts || []).length) return skeletonList(3);
+/* The reaction set. One list drives the picker, the count chips and the
+   explainer sheet, so a fifth reaction is a single entry here.
+   Glyphs are hand-drawn rather than Material Symbols so they carry the colour
+   of the set (see the palette in the explainer sheet); same 24x24 viewBox
+   convention as the icons in Core. */
+const REACTIONS = [
+  { key:"amen", label:"Amen", desc:"Standing with you in prayer", color:"#6d5bd0", tint:"#ece9fb",
+    sym:"folded_hands" },
 
+  { key:"love", label:"Love", desc:"Sending love and care", color:"#c8583c", tint:"#fae6e0",
+    svg:`<path d="M12 20.7 3.9 12.6a5 5 0 0 1 7.1-7.1l1 1 1-1a5 5 0 0 1 7.1 7.1z"/>` },
+
+  /* Stored as "praise" — the key is what is already written in the Reactions
+     sheet, so it stays put while the label on screen changes. */
+  { key:"praise", label:"Agree", desc:"Rejoicing with you", color:"#3f9a51", tint:"#e3f1e5",
+    svg:`<path d="M2.2 20.6h3.4V9.8H2.2z"/>
+         <path d="M21.8 11.4c0-1-.8-1.8-1.8-1.8h-5.7l.9-4.1v-.3c0-.4-.2-.7-.4-1l-1-1-5.9 5.9c-.4.3-.6.8-.6 1.3v9c0 1 .8 1.8 1.8 1.8h8.1c.7 0 1.4-.5 1.7-1.1l2.7-6.4c.1-.2.2-.4.2-.7z"/>` },
+
+  { key:"hope", label:"Hope", desc:"Encouraged by your faith", color:"#d9a629", tint:"#fbeed2",
+    svg:`<path d="M12 5.4a5.2 5.2 0 0 0-3.2 9.3c.5.4.8 1 .9 1.6l.1.6h4.4l.1-.6c.1-.6.4-1.2.9-1.6A5.2 5.2 0 0 0 12 5.4z"/>
+         <rect x="9.6" y="17.6" width="4.8" height="1.6" rx=".8"/>
+         <rect x="10.4" y="20" width="3.2" height="1.6" rx=".8"/>
+         <rect x="11.4" y=".8" width="1.2" height="2.6" rx=".6"/>
+         <rect x="11.4" y=".8" width="1.2" height="2.6" rx=".6" transform="rotate(40 12 10.6)"/>
+         <rect x="11.4" y=".8" width="1.2" height="2.6" rx=".6" transform="rotate(-40 12 10.6)"/>
+         <rect x="11.4" y=".8" width="1.2" height="2.6" rx=".6" transform="rotate(80 12 10.6)"/>
+         <rect x="11.4" y=".8" width="1.2" height="2.6" rx=".6" transform="rotate(-80 12 10.6)"/>` }
+];
+
+/* A reaction glyph in white on its own colour disc — the shape used everywhere
+   the set appears. An entry supplies either a Material Symbol ligature (sym) or
+   its own path markup (svg).
+
+   color, not just background: glyph parts drawn in currentColor are the ones
+   that cut back through the white silhouette. */
+function rxIcon(r, size){
+  // Material's glyphs sit inside their own padding, so they need a little more
+  // room than the hand-drawn paths to land at the same optical weight.
+  const glyph = Math.round(size * (r.sym ? 0.68 : 0.62));
+  const inner = r.sym
+    // FILL 1: solid, like the drawn glyphs — the class default is the outline.
+    ? `<span class="msym" style="font-size:${glyph}px;color:#ffffff;font-variation-settings:'FILL' 1,'wght' 500,'GRAD' 0,'opsz' 24;">${r.sym}</span>`
+    : `<svg width="${glyph}" height="${glyph}" viewBox="0 0 24 24" fill="#ffffff">${r.svg}</svg>`;
+
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:${size}px;height:${size}px;border-radius:50%;background:${r.color};color:${r.color};">
+    ${inner}
+  </span>`;
+}
+
+/* Footer of a post card: the picker button, then a chip per reaction anyone has
+   actually left. A member can hold several of these chips at once on the same
+   post — tapping a chip (or picking it again from the picker) toggles just that
+   one type. A post still waiting on its server-assigned id (the optimistic row
+   submitPost unshifts) renders the same footer without handlers. */
+function reactionBar(p){
+  const counts = p.reactions || {};
+  const mine = new Set(p.myReactions || []);
+  const id = String(p.id || "");
+  const live = !!id;
+
+  // rx-add-btn gets its hover/hold highlight from Styles (so it reads as
+  // tappable without needing its own picker open first). Carries its own id so
+  // positionReactionPicker (Core's render(), post-layout) can find it and line
+  // the picker up above it — it moves as chips are added/removed, so the
+  // picker can't be anchored with static CSS.
+  const addBtn = `<div id="rxAddBtn-${esc(id)}" class="rx-add-btn" ${live ? `onclick="app.openReactionPicker('${esc(id)}')"` : ""}
+    style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:32px;border-radius:100px;background:#f2f2f2;border:1px solid #e4e4e4;cursor:${live ? "pointer" : "default"};opacity:${live ? 1 : .5};">
+    ${micon("add_reaction", 19, "#8d8d8d")}
+  </div>`;
+
+  const chips = REACTIONS.filter(r => (counts[r.key] || 0) > 0).map(r => {
+    const on = mine.has(r.key);
+    return `<div data-rx-chip="${r.key}" ${live ? `onclick="app.react('${esc(id)}','${r.key}',event)"` : ""}
+      style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px 4px 5px;border-radius:100px;cursor:${live ? "pointer" : "default"};background:${on ? r.tint : "#f2f2f2"};border:1.5px solid ${on ? r.color : "transparent"};">
+      <span class="rx-glyph" style="display:inline-flex;">${rxIcon(r, 18)}</span><span style="font-size:13px;font-weight:700;color:${on ? r.color : "#404040"};">${counts[r.key]}</span>
+    </div>`;
+  }).join("");
+
+  // Anchored to the card, so it scrolls with it; the backdrop that closes it on
+  // an outside tap is rendered once by communityScreen. A type already picked
+  // just closes the picker instead of toggling it off — the placed chip below
+  // is the only way to remove a reaction. Rendered with placeholder left/bottom
+  // (fixed up by positionReactionPicker, called from render() in Core, once the
+  // add-reaction button's real position — which shifts as chips are added — is
+  // known) so there's no visible jump.
+  const picker = (live && S.reactionPickerFor === id)
+    ? `<div id="reactionPickerBox" onclick="event.stopPropagation()" style="position:absolute;left:20px;bottom:52px;z-index:46;display:flex;align-items:center;gap:10px;padding:9px 12px;background:#ffffff;border:1px solid #e4e4e4;border-radius:100px;box-shadow:0 12px 30px -10px rgba(17,24,32,.4);">
+        ${REACTIONS.map(r => {
+          const already = mine.has(r.key);
+          return `<div onclick="${already ? "app.closeReactionPicker()" : `app.react('${esc(id)}','${r.key}',event)`}" style="cursor:pointer;border-radius:50%;${already ? `box-shadow:0 0 0 2px ${r.color};` : ""}">${rxIcon(r, 34)}</div>`;
+        }).join("")}
+      </div>`
+    : "";
+
+  // Chips then the add-button, in normal flow — it sits right after the
+  // latest reaction and gets pushed further right as more are added.
+  return `${picker}
+    <div style="height:1px;background:#f1f5f9;margin:14px -20px 12px;"></div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${chips}${addBtn}</div>`;
+}
+
+/* The add-reaction button sits right after the latest chip, so its position
+   shifts as reactions are added or removed — the picker above it can't be
+   anchored with static CSS. Called from render() in Core, once the new
+   markup is laid out, exactly like applyReadMoreClamps (see Reflection). */
+function positionReactionPicker(){
+  const postId = S.reactionPickerFor;
+  if (!postId) return;
+
+  const btn = document.getElementById('rxAddBtn-' + postId);
+  const picker = document.getElementById('reactionPickerBox');
+  const card = btn ? btn.closest('[data-post-id]') : null;
+  if (!btn || !picker || !card) return;
+
+  const cardRect = card.getBoundingClientRect();
+  const btnRect = btn.getBoundingClientRect();
+  const pickerRect = picker.getBoundingClientRect();
+
+  let left = (btnRect.left - cardRect.left) + (btnRect.width / 2) - (pickerRect.width / 2);
+  const maxLeft = cardRect.width - pickerRect.width - 8;
+  left = Math.max(8, Math.min(left, maxLeft));
+
+  picker.style.left = left + 'px';
+  picker.style.bottom = (cardRect.bottom - btnRect.top + 10) + 'px';
+}
+
+/* Launched once — the first time a reaction type lands on a post — flying the
+   tapped icon from where the finger landed to the chip that just appeared,
+   then giving that chip a small pop. Purely decorative: a slow layout, a chip
+   scrolled off-screen, or anything else missing just skips the flourish, never
+   an error. */
+function flyReactionIcon(type, from, postId){
+  const r = REACTIONS.find(x => x.key === type);
+  if (!r || !from) return;
+
+  requestAnimationFrame(() => {
+    const chip = document.querySelector('[data-post-id="' + postId + '"] [data-rx-chip="' + type + '"]');
+    const glyph = chip ? chip.querySelector(".rx-glyph") : null;
+    const rect = (glyph || chip) ? (glyph || chip).getBoundingClientRect() : null;
+    const toX = rect ? rect.left + rect.width / 2 : from.x;
+    const toY = rect ? rect.top + rect.height / 2 : from.y - 100;
+    const endScale = rect ? Math.max(rect.width, rect.height) / 40 : 0.6;
+
+    const fly = document.createElement("div");
+    fly.className = "rx-fly";
+    fly.style.width = "40px";
+    fly.style.height = "40px";
+    fly.style.transform = `translate(${from.x - 20}px, ${from.y - 20}px) scale(1.3)`;
+    fly.innerHTML = rxIcon(r, 40);
+    document.body.appendChild(fly);
+
+    requestAnimationFrame(() => {
+      fly.style.transform = `translate(${toX - 20}px, ${toY - 20}px) scale(${endScale})`;
+      fly.style.opacity = "0.2";
+    });
+
+    setTimeout(() => {
+      fly.remove();
+      if (chip) {
+        chip.classList.add("rx-pop");
+        setTimeout(() => chip.classList.remove("rx-pop"), 420);
+      }
+    }, 600);
+  });
+}
+
+function getCommunityPostsHTML(query) {
   const q = (query || "").toLowerCase().trim();
   const filteredPosts = (DATA.posts || []).filter(p => {
     if (!q) return true;
@@ -26,28 +187,41 @@ function getCommunityPostsHTML(query) {
     const isPraise = p.type === "Praise";
     const badgeBg = isPraise ? "#f4d03f" : "#eff6ff";
     const badgeColor = isPraise ? "#111820" : "#2563eb";
+    const typeBadge = `<span style="flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:.6px;color:${badgeColor};background:${badgeBg};padding:5px 12px;border-radius:100px;">${esc(p.type.toUpperCase())}</span>`;
 
     // Restricted posts get a scope pill so the author can see the limit held.
     // Public posts show nothing — that is the default and needs no label.
     const vis = (p.visibility || "Public").toLowerCase();
     const scopeLabel = vis === "mentor" ? "MENTOR ONLY" : (vis === "group" ? "MY GROUP" : "");
-    const scopePill = scopeLabel
-      ? `<span style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#404040;background:#f2f2f2;border:1px solid #d1d1d1;padding:4px 11px;border-radius:100px;">${esc(scopeLabel)}</span>`
+    // Plain caption text under the group line, no pill/border — matches the
+    // weight of the group/time line right above it.
+    const scopeCaption = scopeLabel
+      ? `<div style="font-size:11px;font-weight:700;letter-spacing:.6px;color:#2563eb;margin-top:3px;">${esc(scopeLabel)}</div>`
       : "";
 
-    return `<div style="background:#ffffff;border-radius:20px;padding:18px 20px;margin-bottom:14px;box-shadow:0 4px 16px -12px rgba(17,24,32,.15);border:1px solid #d1d1d1;">
-      <div style="display:flex;align-items:center;gap:14px;">
+    // A post is only actionable once the server has handed back its real id
+    // (see the optimistic row in submitPost) and while it isn't mid-delete.
+    const isBusy = !!p.isDeleting;
+    const cardKebab = (!!p.id && !isBusy && p.mine) ? kebabBtn("post", p.id, "") : "";
+
+    // The type badge (and, for the author, the kebab) sits inline with the
+    // name at the top of the card, not in its own row further down — the
+    // name still gets a wide flex item so a long one wraps instead of being
+    // ellipsis-cut.
+    return `<div data-post-id="${esc(p.id || "")}" style="position:relative;background:#ffffff;border-radius:20px;padding:18px 20px;margin-bottom:14px;box-shadow:0 4px 16px -12px rgba(17,24,32,.15);border:1px solid #d1d1d1;opacity:${isBusy ? .55 : 1};pointer-events:${isBusy ? "none" : "auto"};transition:opacity .3s ease;">
+      <div style="display:flex;align-items:flex-start;gap:14px;">
         <div style="width:44px;height:44px;border-radius:50%;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0;">${esc(getInitials(p.author))}</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:16px;font-weight:700;color:#111820;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.author)}</div>
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+            <div style="font-size:16px;font-weight:700;color:#111820;line-height:1.3;overflow-wrap:anywhere;">${esc(p.author)}</div>
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">${typeBadge}${cardKebab}</div>
+          </div>
           <div style="font-size:12px;color:#8d8d8d;margin-top:2px;">${esc(p.group || "Life Group")} · ${esc(timeAgo(p.time))}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-          ${scopePill}
-          <span style="font-size:10px;font-weight:700;letter-spacing:.6px;color:${badgeColor};background:${badgeBg};padding:5px 12px;border-radius:100px;">${esc(p.type.toUpperCase())}</span>
+          ${scopeCaption}
         </div>
       </div>
-      <div style="font-size:14px;color:##111820;line-height:1.55;margin-top:14px;white-space:pre-wrap;">${parseFormatting(p.text)}</div>
+      <div style="font-size:14px;color:#111820;line-height:1.55;margin-top:14px;white-space:pre-wrap;">${parseFormatting(p.text)}</div>
+      ${reactionBar(p)}
     </div>`;
   }).join("");
 }
@@ -55,17 +229,19 @@ function getCommunityPostsHTML(query) {
 function communityScreen(){
   if (!DATA) return `<div class="screen"></div>`;
 
-  return `<div class="screen" style="background:#f2f2f2;">
-    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
-      <div onclick="app.backHome()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
-      <div>
-        <div class="serif" style="font-size:26px;font-weight:600;color:#111820;letter-spacing:-.4px;">Prayer</div>
-        <div style="font-size:13px;color:#8d8d8d;margin-top:1px;">Praise & prayer across all groups</div>
-      </div>
-    </div>
-    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+  return `<div class="screen" style="background:#ffffff;">
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="flex:1;min-height:0;background:#f4f6f9;padding:0 0 140px;overflow-y:auto;">
       <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
-      
+
+      <div style="background:#ffffff;color:#2b2b2b;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
+        <div onclick="app.backHome()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#f4f6f9;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="serif" style="font-size:26px;font-weight:700;color:#2b2b2b;letter-spacing:-.4px;">Prayer</div>
+          <div style="font-size:14px;color:#8f8a80;margin-top:1px;">Praise & prayer across all groups</div>
+        </div>
+        <div onclick="app.openReactionInfo()" title="What the reactions mean" class="icon-btn" style="cursor:pointer;flex-shrink:0;width:38px;height:38px;border-radius:50%;background:#f4f6f9;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${micon("info", 20, "#8d8d8d")}</div>
+      </div>
+
       <div style="padding:0 22px;margin-top:10px;">
         <div style="position:relative;display:flex;align-items:center;">
           <svg style="position:absolute;left:14px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8d8d8d" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -78,16 +254,41 @@ function communityScreen(){
       </div>
     </div>
 
-    <div onclick="app.openCompose()" style="position:absolute;right:22px;bottom:90px;width:56px;height:56px;border-radius:50%;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 10px 28px rgba(37,99,235,0.5);z-index:40;">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-    </div>
+    ${S.reactionPickerFor ? `<div onclick="app.closeReactionPicker()" style="position:absolute;top:0;left:0;right:0;bottom:0;z-index:44;"></div>` : ""}
 
+    ${communityFab()}
   </div>`;
+}
+
+/* Mirrors reflectionFab(): the "+" rotates 45° into an "x" (see fabIconAnim in
+   Core) and fans out two choices above it, each jumping straight into the
+   compose sheet with that type pre-selected. */
+function communityFab(){
+  const open = S.communityFabOpen;
+  const iconAnim = fabIconAnim("communityFab", open);
+  const anim = overlayAnim("communityFab", open);
+
+  const option = (type, label, iconName) => `<div onclick="app.chooseCommunityType('${type}')" style="display:flex;align-items:center;justify-content:flex-end;gap:10px;cursor:pointer;">
+      <span style="font-size:14px;font-weight:600;color:#2b2b2b;background:#ffffff;padding:9px 16px;border-radius:100px;box-shadow:0 6px 16px -10px rgba(17,24,32,.35);white-space:nowrap;">${label}</span>
+      <div style="flex-shrink:0;width:44px;height:44px;border-radius:50%;background:#ffffff;color:#2563eb;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px -10px rgba(17,24,32,.35);">${micon(iconName, 20)}</div>
+    </div>`;
+
+  const menu = open ? `<div onclick="app.toggleCommunityFab()" style="position:absolute;inset:0;z-index:39;"></div>
+    <div class="fab-menu${anim}" style="position:absolute;right:22px;bottom:158px;z-index:41;display:flex;flex-direction:column;align-items:flex-end;gap:12px;">
+      ${option("Prayer","Add prayer","volunteer_activism")}
+      ${option("Praise","Add praise","celebration")}
+    </div>` : "";
+
+  return `${menu}
+    <div onclick="app.toggleCommunityFab()" style="position:absolute;right:22px;bottom:90px;width:56px;height:56px;border-radius:50%;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 10px 28px rgba(37,99,235,0.5);z-index:40;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="${iconAnim.trim()}" style="transform:rotate(${open?'45deg':'0deg'});"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    </div>`;
 }
 
 function composeSheet(){
   const anim = overlayAnim("compose", S.composeOpen);
   if (!S.composeOpen) return "";
+  const isEditing = !!S.editingPostId;
   const typeBtn = (t, label) => {
     const on = S.composeType === t;
     return `<div onclick="app.setComposeType('${t}')" style="cursor:pointer;flex:1;text-align:center;padding:10px;border-radius:10px;font-size:14px;font-weight:600;background:${on?'#2563eb':'#f2f2f2'};color:${on?'#ffffff':'#404040'};">${label}</div>`;
@@ -101,7 +302,7 @@ function composeSheet(){
     <div class="sheet${anim}" onclick="event.stopPropagation()" style="padding-bottom:calc(30px + env(safe-area-inset-bottom));">
       <div class="grab"></div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-        <div class="serif" style="font-size:20px;font-weight:700;color:#111820;">Share to Community</div>
+        <div class="serif" style="font-size:20px;font-weight:700;color:#111820;">${isEditing ? "Edit post" : "Share to Community"}</div>
         <div onclick="app.closeCompose()" style="cursor:pointer;font-size:14px;color:#8d8d8d;font-weight:600;">Cancel</div>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:10px;">
@@ -115,21 +316,121 @@ function composeSheet(){
         ${visBtn("Mentor", "Mentor only")}
       </div>
       <textarea oninput="app.onComposeInput(this.value)" placeholder="Write your praise or prayer request..." style="width:100%;height:120px;border:1px solid #d1d1d1;padding:12px;border-radius:12px;font-size:14px;background:#f2f2f2;color:#111820;resize:none;line-height:1.4;">${esc(S.composeText)}</textarea>
-      <div onclick="app.submitPost()" style="margin-top:14px;height:48px;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;border-radius:14px;cursor:pointer;font-weight:600;box-shadow:0 8px 20px rgba(37,99,235,0.4);">Post</div>
+      <div onclick="app.submitPost()" style="margin-top:14px;height:48px;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;border-radius:14px;cursor:pointer;font-weight:600;box-shadow:0 8px 20px rgba(37,99,235,0.4);">${isEditing ? "Save changes" : "Post"}</div>
     </div>
-  </div>`; 
+  </div>`;
+}
+
+/* Shown once, on the first tap of a reaction button, and any time after that
+   from the ⓘ in the Community header. Mounted globally by render(), like the
+   compose sheet — overlayAnim must run before the early return so the flag
+   clears when the sheet closes (see Core). */
+function reactionInfoSheet(){
+  const anim = overlayAnim("reactionInfo", S.reactionInfoOpen);
+  if (!S.reactionInfoOpen) return "";
+
+  const rows = REACTIONS.map(r => `<div style="display:flex;align-items:center;gap:14px;background:${r.tint};border-radius:16px;padding:12px 14px;margin-bottom:10px;">
+    ${rxIcon(r, 44)}
+    <div style="min-width:0;">
+      <div style="font-size:16px;font-weight:700;color:${r.color};">${r.label}</div>
+      <div style="font-size:13px;color:#404040;margin-top:2px;">${r.desc}</div>
+    </div>
+  </div>`).join("");
+
+  return `<div class="sheet-backdrop${anim}" onclick="app.closeReactionInfo()">
+    <div class="sheet${anim}" onclick="event.stopPropagation()" style="padding-bottom:calc(30px + env(safe-area-inset-bottom));">
+      <div class="grab"></div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.2px;color:#8d8d8d;margin-bottom:14px;">THE REACTION SET</div>
+      ${rows}
+      <div onclick="app.closeReactionInfo()" style="margin-top:14px;height:48px;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;border-radius:14px;cursor:pointer;font-weight:600;box-shadow:0 8px 20px rgba(37,99,235,0.4);">Got it</div>
+    </div>
+  </div>`;
 }
 
 SCREENS.community = communityScreen;
 
 Object.assign(window.app, {
-  openCommunity: () => go("community"),
+  openCommunity: () => { S.communityFabOpen = false; go("community"); },
+
+  toggleCommunityFab: () => { S.communityFabOpen = !S.communityFabOpen; render(); },
+  chooseCommunityType: (type) => {
+    S.communityFabOpen = false;
+    S.composeType = type;
+    app.openCompose();
+  },
 
   openCompose: () => { if (S.composeOpen) return; S.composeOpen = true; render(); },
-  closeCompose: () => { S.composeOpen = false; S.composeText = ""; S.composeType = "Praise"; S.composeVisibility = "Public"; render(); },
+  closeCompose: () => { S.composeOpen = false; S.composeText = ""; S.composeType = "Praise"; S.composeVisibility = "Public"; S.editingPostId = null; render(); },
   onComposeInput: (v) => { S.composeText = v; },
   setComposeType: (t) => { S.composeType = t; render(); },
   setComposeVisibility: (v) => { S.composeVisibility = v; render(); },
+
+  /* First tap explains the set before picking anything; reactionInfoThen
+     remembers which post the tap was aimed at so closing the explainer lands
+     on that post's picker rather than dropping the gesture. */
+  openReactionPicker: (postId) => {
+    if (!reactionIntroSeen()) {
+      markReactionIntroSeen();
+      S.reactionInfoOpen = true;
+      S.reactionInfoThen = postId;
+      render();
+      return;
+    }
+    S.reactionPickerFor = postId;
+    render();
+  },
+  closeReactionPicker: () => { S.reactionPickerFor = null; render(); },
+
+  openReactionInfo: () => { S.reactionInfoOpen = true; S.reactionInfoThen = null; render(); },
+  closeReactionInfo: () => {
+    S.reactionInfoOpen = false;
+    S.reactionPickerFor = S.reactionInfoThen || null;
+    S.reactionInfoThen = null;
+    render();
+  },
+
+  /* Toggles one reaction type on a post; any other types the member already
+     left on it are untouched, so a person can hold Amen and Love at once. evt
+     is the tap/click event — its coordinates are the launch point for the
+     first-time flourish below. */
+  react: (postId, type, evt) => {
+    const p = (DATA.posts || []).find(x => String(x.id) === String(postId));
+    if (!p) return;
+
+    const from = evt ? { x: evt.clientX, y: evt.clientY } : null;
+
+    p.reactions = p.reactions || { amen:0, love:0, praise:0, hope:0 };
+    p.myReactions = p.myReactions || [];
+
+    const hadIt = p.myReactions.indexOf(type) !== -1;
+    // A chip that does not exist yet on this post — worth the flourish.
+    const isFirstOnPost = !hadIt && (p.reactions[type] || 0) === 0;
+
+    if (hadIt) {
+      p.myReactions = p.myReactions.filter(t => t !== type);
+      p.reactions[type] = Math.max(0, (p.reactions[type] || 0) - 1);
+    } else {
+      p.myReactions.push(type);
+      p.reactions[type] = (p.reactions[type] || 0) + 1;
+    }
+
+    // Held per (post, type) until a refresh comes back agreeing, so a refresh
+    // in flight cannot flip this one chip back (see refreshData in Core).
+    S.pendingReactions[postId] = S.pendingReactions[postId] || {};
+    S.pendingReactions[postId][type] = !hadIt;
+    S.reactionPickerFor = null;
+    render();
+
+    if (isFirstOnPost && from) flyReactionIcon(type, from, postId);
+
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withFailureHandler((err) => {
+          console.error("Failed to save reaction: " + err.message);
+        })
+        .saveReaction({ userEmail: S.currentUserEmail, postId: postId, type: type });
+    }
+  },
 
   onCommunitySearch: (v) => {
     S.communitySearchQuery = v;
@@ -141,9 +442,48 @@ Object.assign(window.app, {
 
   submitPost: () => {
     const text = S.composeText.trim(); if (!text) return;
+
+    if (S.editingPostId) {
+      const postId = S.editingPostId;
+      const p = (DATA.posts || []).find(x => String(x.id) === String(postId));
+      if (!p) { app.closeCompose(); return; }
+
+      const before = { type: p.type, text: p.text, visibility: p.visibility };
+      const newType = S.composeType;
+      const newVisibility = S.composeVisibility;
+
+      p.type = newType;
+      p.text = text;
+      p.visibility = newVisibility;
+
+      S.composeOpen = false; S.composeText = ""; S.composeType = "Praise"; S.composeVisibility = "Public";
+      S.editingPostId = null;
+      render();
+
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        google.script.run
+          .withFailureHandler((err) => {
+            p.type = before.type; p.text = before.text; p.visibility = before.visibility;
+            render();
+            alert("Failed to save post: " + err.message);
+          })
+          .updatePost({
+            userEmail: S.currentUserEmail,
+            postId: postId,
+            text: text,
+            type: newType,
+            visibility: newVisibility
+          });
+      }
+      return;
+    }
+
     const postObj = { userEmail: S.currentUserEmail, type: S.composeType, text: text, timestamp: new Date().toISOString(), visibility: S.composeVisibility };
 
-    DATA.posts.unshift({
+    // id is filled in by savePost's reply below — only the server can assign it,
+    // and the card cannot take reactions until it has one.
+    const optimistic = {
+      id: "",
       author: DATA.user.name,
       group: DATA.group.name,
       type: S.composeType,
@@ -151,17 +491,69 @@ Object.assign(window.app, {
       time: postObj.timestamp,
       initials: getInitials(DATA.user.name),
       visibility: S.composeVisibility,
-      mine: true
-    });
+      mine: true,
+      reactions: { amen:0, love:0, praise:0, hope:0 },
+      myReactions: []
+    };
+    DATA.posts.unshift(optimistic);
     S.composeOpen = false; S.composeText = ""; S.composeType = "Praise"; S.composeVisibility = "Public";
     go("community");
 
     if (typeof google !== 'undefined' && google.script && google.script.run) {
       google.script.run
+        .withSuccessHandler((postId) => {
+          if (!postId) return;
+          optimistic.id = String(postId);
+          render();
+        })
         .withFailureHandler((err) => {
           console.error("Failed to post to server: " + err.message);
         })
         .savePost(postObj);
+    }
+  },
+
+  /* ---- Author actions: kebab -> sheet -> edit / delete (kind "post") ----
+     The kebab itself, the sheet, and the delete-confirm sheet are shared with
+     Reflection — see startEditFromActions / confirmDeleteNow there for the
+     "post" branch that calls into these two. */
+  startEditPost: (postId) => {
+    const p = (DATA.posts || []).find(x => String(x.id) === String(postId));
+    if (!p) return;
+    S.editingPostId = postId;
+    S.composeType = p.type || "Praise";
+    S.composeText = p.text || "";
+    S.composeVisibility = p.visibility || "Public";
+    S.composeOpen = true;
+    render();
+  },
+
+  /* Deletion is server-first, like deleteReflectionNow — a post removed
+     locally before the write lands would just reappear on the next refresh. */
+  deletePostNow: (postId) => {
+    const p = (DATA.posts || []).find(x => String(x.id) === String(postId));
+    if (!p) return;
+
+    p.isDeleting = true;
+    render();
+
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(() => {
+          const idx = DATA.posts.findIndex(x => String(x.id) === String(postId));
+          if (idx !== -1) DATA.posts.splice(idx, 1);
+          render();
+        })
+        .withFailureHandler((err) => {
+          p.isDeleting = false;
+          render();
+          alert("Failed to delete post: " + err.message);
+        })
+        .deletePost({ userEmail: S.currentUserEmail, postId: postId });
+    } else {
+      const idx = DATA.posts.findIndex(x => String(x.id) === String(postId));
+      if (idx !== -1) DATA.posts.splice(idx, 1);
+      render();
     }
   }
 });

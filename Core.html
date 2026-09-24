@@ -13,25 +13,39 @@ const S = {
   screen: "welcome", 
   selectedEvent: null,
   composeOpen: false, composeType: "Praise", composeText: "", composeVisibility: "Public",
-  attendanceOpen: false, attMarks: {},
+  // Mentor attendance screen (Attendance.html): marks and notes keyed by userId,
+  // plus the counts of a save the server has not confirmed yet — keyed by
+  // eventId and merged back over every refresh, like pendingReactions below.
+  attStatus: {}, attNotes: {}, attSearch: "", attSaving: false,
+  pendingAttendance: {},
+  // Edit mode re-opens a saved record: attBaseline is that record, and every
+  // change the screen reports is measured against it.
+  attMode: "fill", attBaseline: {}, attSavedAt: "", attLoadingEdit: false,
   reflectionTab: "all",
+  reflectionFabOpen: false,
+  // The composer's visibility + attachment sheet (see reflectionOptionsSheet in
+  // Reflection) — the compose screen itself only shows the writing surface.
+  reflectionOptionsOpen: false,
   rTitle: "", rDesc: "", rVisibility: "Public", rFile: null,
   isSubmittingReflection: false,
   isSigningIn: false,
   isRestoring: false,
   isRefreshing: false,
-  // True between the lean sign-in/resume payload and the extended keys landing.
-  // Distinguishes "posts/reflections/notifications not fetched yet" from "empty".
-  isLoadingExtended: false,
   expandedReflections: {},
   activeReflectionId: null,
   replyText: "", quoteContext: null,
   actionSheet: null, confirmDelete: null,
-  editingReflectionId: null, editingReplyId: null,
+  editingReflectionId: null, editingReplyId: null, editingPostId: null,
   pulseAnswers: {}, pulseOE: "",
   fileErrorModalOpen: false, fileErrorMessage: "",
   pulseAlreadySubmittedModalOpen: false,
   communitySearchQuery: "",
+  communityFabOpen: false,
+  // Which post's reaction picker is open, and the reaction writes this session
+  // is still waiting on the server for — { postId: { type: true|false } },
+  // true meaning "should be on" (see the merge in refreshData).
+  reactionPickerFor: null, reactionInfoOpen: false, reactionInfoThen: null,
+  pendingReactions: {},
   loginEmail: "",
   loginPassword: "",
   currentUserEmail: "",
@@ -41,7 +55,11 @@ const S = {
   scrollPositions: {},
   threadScrollTop: 0,
   threadOrigin: "reflection",
-  readNotifIds: []
+  readNotifIds: [],
+  selectedAnnouncement: null,
+  announcementScrollTop: 0,
+  announcementShareOpen: false,
+  announcementShareCopied: false
 };
 
 /* Screen registry + global handler object.
@@ -70,6 +88,28 @@ function readToken(){  try { return window.localStorage.getItem(SESSION_KEY) || 
 function saveToken(t){ try { window.localStorage.setItem(SESSION_KEY, t); } catch(e){} }
 function clearToken(){ try { window.localStorage.removeItem(SESSION_KEY); } catch(e){} }
 
+/* The reaction meanings are explained once, the first time a member opens the
+   picker. Same best-effort wrapping as the token above: a throw just means the
+   explainer is shown again, which is harmless. The ⓘ in the Community header
+   re-opens it any time. */
+const RX_INTRO_KEY = "lg_rx_intro";
+function reactionIntroSeen(){ try { return !!window.localStorage.getItem(RX_INTRO_KEY); } catch(e){ return false; } }
+function markReactionIntroSeen(){ try { window.localStorage.setItem(RX_INTRO_KEY, "1"); } catch(e){} }
+
+/* ---- Server clock ------------------------------------------------------
+   Anything that gates on "is it time yet" must not trust the device clock: a
+   phone in another timezone, or with the time set by hand, would open the
+   mentor attendance card (see Events) at the wrong moment. Every getData
+   payload carries serverNow, so we keep the offset against it and read the
+   time through nowMs() instead of Date.now().
+
+   A payload without serverNow — the standalone mock, or a build served before
+   this field existed — leaves the offset at 0, i.e. plain device time.
+   ---------------------------------------------------------------------- */
+let SERVER_SKEW_MS = 0;
+function noteServerClock(d){ if (d && d.serverNow) SERVER_SKEW_MS = Number(d.serverNow) - Date.now(); }
+function nowMs(){ return Date.now() + SERVER_SKEW_MS; }
+
 function getInitials(name) {
   if (!name) return "US";
   const parts = name.trim().split(/\s+/);
@@ -82,8 +122,6 @@ function getInitials(name) {
 function refreshData(callback) {
   if (typeof google !== 'undefined' && google.script && google.script.run && S.currentUserEmail) {
     google.script.run.withSuccessHandler((newData) => {
-      // This is the full getData, so its payload carries the keys lean mode omits.
-      S.isLoadingExtended = false;
       if (newData) {
         if (DATA && DATA.reflections) {
           newData.reflections = newData.reflections.map(serverRef => {
@@ -113,7 +151,60 @@ function refreshData(callback) {
           newData.notifUnread = newData.notifications.filter(n => !n.read).length;
         }
 
+        // Same race one step further: a refresh can outrun a saveReaction write
+        // and flip a just-tapped chip back. Re-apply whatever types this session
+        // toggled that the server hasn't caught up on yet, and adjust the counts
+        // the server sent so they agree.
+        if (newData.posts) {
+          Object.keys(S.pendingReactions).forEach(postId => {
+            const pendingTypes = S.pendingReactions[postId];
+            const post = newData.posts.find(p => String(p.id) === String(postId));
+            if (!post) { delete S.pendingReactions[postId]; return; }
+
+            post.reactions = post.reactions || { amen:0, love:0, praise:0, hope:0 };
+            post.myReactions = post.myReactions || [];
+            const serverHas = new Set(post.myReactions);
+
+            Object.keys(pendingTypes).forEach(type => {
+              const wantOn = pendingTypes[type];
+              if (serverHas.has(type) === wantOn) {
+                delete pendingTypes[type]; // the server caught up
+                return;
+              }
+              if (wantOn) {
+                post.reactions[type] = (post.reactions[type] || 0) + 1;
+                post.myReactions.push(type);
+              } else {
+                post.reactions[type] = Math.max(0, (post.reactions[type] || 0) - 1);
+                post.myReactions = post.myReactions.filter(t => t !== type);
+              }
+            });
+
+            if (Object.keys(pendingTypes).length === 0) delete S.pendingReactions[postId];
+          });
+        }
+
+        /* And once more for attendance: saving navigates back to the event
+           detail screen straight away, which kicks off this very refresh, so
+           the payload in flight can easily predate the write. Re-apply the
+           counts this session recorded until the server reports them itself,
+           otherwise the summary card would flip back to "not taken yet".
+           Keyed by eventId, which every event in the payload carries. */
+        Object.keys(S.pendingAttendance).forEach(eventId => {
+          const pending = S.pendingAttendance[eventId];
+          const matches = [newData.nextEvent].concat(newData.events || [])
+                            .filter(ev => ev && String(ev.eventId) === String(eventId));
+          if (!matches.length) { delete S.pendingAttendance[eventId]; return; }
+
+          if (matches.some(ev => ev.attendance && ev.attendance.recorded)) {
+            delete S.pendingAttendance[eventId];   // the server caught up
+            return;
+          }
+          matches.forEach(ev => { ev.attendance = pending; });
+        });
+
         DATA = newData;
+        noteServerClock(newData);
         // A background refresh must not remount the compose sheet underneath the
         // user — that replays its slide-up and drops the textarea caret. The
         // repaint happens on the next render (closeCompose / submitPost).
@@ -121,8 +212,6 @@ function refreshData(callback) {
       }
       if (callback) callback();
     }).withFailureHandler((err) => {
-      // A dropped refresh must not leave the skeletons pulsing forever.
-      S.isLoadingExtended = false;
       render();
       if (callback) callback();
     }).getData(S.currentUserEmail);
@@ -134,7 +223,23 @@ function refreshData(callback) {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") refreshData();
 });
-window.addEventListener("focus", refreshData);
+window.addEventListener("focus", () => refreshData());
+
+/* iOS Safari only tints its status bar/toolbar with <meta name="theme-color">
+   once the document itself has been scrolled — at the very top (scrollY 0) it
+   shows its own default bar no matter what theme-color says. body is a few px
+   taller than the viewport (see Styles) purely to give this something to
+   scroll to; #app and .statusbar are `position:fixed` so nothing here is ever
+   visible on screen. Re-armed on every scroll event in case anything (a
+   resize, a stray gesture reaching past a scrollable container) bounces it
+   back to 0. */
+function lockStatusBarScroll(){
+  if (window.scrollY < 1) window.scrollTo(0, 1);
+}
+lockStatusBarScroll();
+window.addEventListener("load", lockStatusBarScroll);
+window.addEventListener("scroll", lockStatusBarScroll, { passive: true });
+window.addEventListener("orientationchange", () => setTimeout(lockStatusBarScroll, 50));
 
 const esc = s => String(s == null ? "" : s)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -180,11 +285,12 @@ function formatMentions(text) {
   return parsed;
 }
 
-const SCREENS_WITH_BACK = ["login", "eventDetail", "community", "reflectionNew", "reflectionThread", "pulse", "pulseForm", "profileEdit", "group", "events", "resources", "notifications"];
+const SCREENS_WITH_BACK = ["login", "eventDetail", "attendance", "community", "reflectionNew", "reflectionThread", "pulse", "pulseForm", "profileEdit", "group", "events", "resources", "notifications", "announcements", "announcementDetail"];
 
 function getBackScreenForCurrent() {
   if (S.screen === "login") return "welcome";
   if (S.screen === "eventDetail") return "events";
+  if (S.screen === "attendance") return "eventDetail";
   if (S.screen === "reflectionNew") return "reflection";
   // A thread can be opened from the feed or from a notification — go back to whichever.
   if (S.screen === "reflectionThread") return S.threadOrigin || "reflection";
@@ -194,15 +300,21 @@ function getBackScreenForCurrent() {
   if (S.screen === "group") return "home";
   if (S.screen === "events") return "home";
   if (S.screen === "resources") return "home";
+  // The detail view can be reached straight from Home's carousel too, but it
+  // always backs out to the full list — matches "See All" being the other entry point.
+  if (S.screen === "announcementDetail") return "announcements";
+  if (S.screen === "announcements") return "home";
   return "home";
 }
 
-const NAV_HIDDEN = ["restoring","welcome","login","eventDetail","community","resources","reflectionNew","reflectionThread","pulse","pulseForm","pulseDone","pulseAlreadySubmitted","profileEdit", "group", "notifications"];
+const NAV_HIDDEN = ["restoring","welcome","login","eventDetail","attendance","community","resources","reflectionNew","reflectionThread","pulse","pulseForm","pulseDone","pulseAlreadySubmitted","profileEdit", "group", "notifications", "announcements", "announcementDetail"];
 
-function go(screen){ 
-  S.screen = screen; 
-  render(); 
-  if (S.currentUserEmail && screen !== "welcome" && screen !== "login") {
+function go(screen, opts){
+  S.screen = screen;
+  render();
+  // skipRefresh: DATA just arrived from a full getData() call (sign-in/session
+  // resume), so an immediate refreshData() here would be a redundant re-read.
+  if (S.currentUserEmail && screen !== "welcome" && screen !== "login" && !(opts && opts.skipRefresh)) {
     refreshData();
   }
 }
@@ -228,23 +340,9 @@ const I = {
 /* ---- Small shared UI helpers used by multiple feature screens ---- */
 
 function subHeader(backFn,title,sub){
-  return `<div style="display:flex;align-items:center;gap:14px;"><div onclick="app.${backFn}()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div><div><div class="serif" style="font-size:24px;font-weight:600;color:#111820;">${esc(title)}</div><div style="font-size:13px;color:#8d8d8d;">${esc(sub)}</div></div></div>`;
+  return `<div style="display:flex;align-items:center;gap:14px;"><div onclick="app.${backFn}()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#f4f6f9;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div><div><div class="serif" style="font-size:26px;font-weight:700;letter-spacing:-.4px;color:#2b2b2b;">${esc(title)}</div><div style="font-size:14px;color:#8f8a80;">${esc(sub)}</div></div></div>`;
 }
 function emptyRow(msg){ return `<div style="padding:40px 20px;text-align:center;color:#8d8d8d;font-size:14px;">${esc(msg)}</div>`; }
-
-/* Placeholder cards held while the lean sign-in payload's missing keys are
-   still in flight (see S.isLoadingExtended). Shaped like the real card so
-   nothing jumps when the data lands. */
-function skeletonList(count){
-  const bar = (w, mt) => `<div class="sk-bar" style="width:${w};margin-top:${mt};"></div>`;
-  return Array.from({length: count || 3}, () => `<div class="sk-card">
-    <div style="display:flex;align-items:center;gap:14px;">
-      <div class="sk-avatar"></div>
-      <div style="flex:1;">${bar("45%","0")}${bar("30%","8px")}</div>
-    </div>
-    ${bar("100%","16px")}${bar("85%","8px")}${bar("60%","8px")}
-  </div>`).join("");
-}
 
 /* Sheets are re-emitted from scratch on every render(), so their CSS entry
    animation replays on any render that happens while they are open — which
@@ -259,10 +357,23 @@ function overlayAnim(key, isOpen){
   return (isOpen && wasOpen) ? " no-anim" : "";
 }
 
+/* Companion to overlayAnim() for a FAB's own "+" -> "x" glyph: picks the class
+   that plays the right one-shot rotation on the render where the FAB's open
+   state actually flips, in either direction, so the icon reads as a single
+   continuous rotation instead of animating open but snapping shut. Must be
+   called before overlayAnim() runs for the same key (it peeks the same
+   mountedOverlays[key] that overlayAnim is about to overwrite). */
+function fabIconAnim(key, isOpen){
+  const wasOpen = !!mountedOverlays[key];
+  if (isOpen) return wasOpen ? "" : " fab-icon-rotate";
+  return wasOpen ? " fab-icon-close" : "";
+}
+
 function bottomNav(){
   if (NAV_HIDDEN.includes(S.screen)) return "";
-  const item = (fn,label,iconName,active) => `<div onclick="app.${fn}()" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;padding:4px 0;color:${active?'#2563eb':'#8d8d8d'};">${micon(iconName,26)}<span style="font-size:12px;font-weight:600;">${label}</span></div>`;
-  return `<div style="position:absolute;left:0;right:0;bottom:0;z-index:35;display:flex;padding:12px 12px calc(26px + env(safe-area-inset-bottom));background:rgba(255,255,255,.95);backdrop-filter:blur(16px);border-top:1px solid #d1d1d1;">
+  const item = (fn,label,iconName,active) => `<div onclick="app.${fn}()" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;color:${active?'#2563eb':'#8d8d8d'};">${micon(iconName,26)}<span style="font-size:12px;font-weight:600;">${label}</span></div>`;
+  // NAV_CONTENT_HEIGHT (Reflection's FAB reads this same number to clear the bar).
+  return `<div style="position:absolute;left:0;right:0;bottom:0;z-index:35;display:flex;padding:6px 12px calc(6px + env(safe-area-inset-bottom));background:rgba(255,255,255,.95);backdrop-filter:blur(16px);border-top:1px solid #d1d1d1;">
     ${item("goHome","Home","home",S.screen==="home")}
     ${item("goEvents","Events","calendar_month",S.screen==="events")}
     ${item("goReflection","Reflection","lightbulb",S.screen==="reflection")}
@@ -283,20 +394,39 @@ function render(){
     if (oldThread) {
       S.threadScrollTop = oldThread.scrollTop;
     }
-
-    const metaTheme = document.getElementById("theme-color-meta");
-    if (metaTheme) {
-      if (["restoring", "welcome", "home", "profile"].includes(S.screen)) {
-        metaTheme.content = '#111820';
-      } else if (["login", "pulseDone", "pulseAlreadySubmitted"].includes(S.screen)) {
-        metaTheme.content = '#1c3249';
-      } else {
-        metaTheme.content = '#f2f2f2';
-      }
+    // Dedicated (not S.screen-keyed) so a trip through another screen — e.g.
+    // opening the share sheet's backdrop — can never clobber it the way the
+    // generic scrollPositions map above does when S.screen has already flipped.
+    const oldAnnDetail = document.getElementById("announcementScroll");
+    if (oldAnnDetail) {
+      S.announcementScrollTop = oldAnnDetail.scrollTop;
     }
 
+    // Same branches drive both: the meta tag tints Android Chrome's/Safari's own
+    // toolbar, while --bg-status-rgb feeds the .statusbar overlay in Styles that
+    // fakes a matching, blurred iOS status bar under black-translucent (see the
+    // comment on .statusbar — black-translucent doesn't paint the bar itself,
+    // it just makes it show whatever's scrolled underneath, so without this a
+    // notched iPhone shows a seam between the true status bar and the header).
+    const metaTheme = document.getElementById("theme-color-meta");
+    // White is the default now (every top bar matches Home's) — only the
+    // handful of screens with their own branded/dark header carve out an
+    // exception below.
+    let hex = '#ffffff', rgb = '255 255 255';
+    if (["restoring", "welcome"].includes(S.screen)) {
+      hex = '#112378'; rgb = '17 35 120';
+    } else if (S.screen === "login") {
+      hex = '#f4f6f9'; rgb = '244 246 249';
+    } else if (["pulseDone", "pulseAlreadySubmitted"].includes(S.screen)) {
+      hex = '#1c3249'; rgb = '28 50 73';
+    } else if (S.screen === "profileEdit") {
+      hex = '#f4f6f9'; rgb = '244 246 249';
+    }
+    if (metaTheme) metaTheme.content = hex;
+    document.documentElement.style.setProperty('--bg-status-rgb', rgb);
+
     const screenFn = SCREENS[S.screen] || welcomeScreen;
-    appEl.innerHTML = screenFn() + bottomNav() + composeSheet() + attendanceSheet() + fileErrorModal() + postActionSheet() + confirmDeleteSheet();
+    appEl.innerHTML = screenFn() + bottomNav() + composeSheet() + reactionInfoSheet() + fileErrorModal() + postActionSheet() + confirmDeleteSheet() + reflectionOptionsSheet() + announcementShareSheet();
 
     const newContainer = document.getElementById("scrollable-container");
     if (newContainer && S.scrollPositions[S.screen] !== undefined) {
@@ -306,9 +436,14 @@ function render(){
     if (newThread) {
       newThread.scrollTop = S.threadScrollTop;
     }
+    const newAnnDetail = document.getElementById("announcementScroll");
+    if (newAnnDetail) {
+      newAnnDetail.scrollTop = S.announcementScrollTop;
+    }
 
     // Text clamping can only be measured once the new markup is laid out.
     if (typeof applyReadMoreClamps === "function") applyReadMoreClamps();
+    if (typeof positionReactionPicker === "function") positionReactionPicker();
   } catch (err) {
     document.getElementById("app").innerHTML = `<div style="padding:24px;color:#d94545;font-size:14px;overflow-y:auto;background:#ffffff;height:100%;"><b>Critical Render Error</b><br/><br/>${err.message}<br/><br/><pre style="white-space:pre-wrap;">${err.stack}</pre></div>`;
   }

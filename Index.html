@@ -3,14 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" id="theme-color-meta" content="#111820">
+<meta name="theme-color" id="theme-color-meta" content="#112378">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Life Group App</title>
+<meta name="apple-mobile-web-app-title" content="SCU Small Group">
+<title>SCU Small Group</title>
+<link rel="icon" href="https://lh3.googleusercontent.com/d/17-3NVNtoneKapt_mJMzMXEK7EVuRC_RE">
+<link rel="apple-touch-icon" href="https://lh3.googleusercontent.com/d/17-3NVNtoneKapt_mJMzMXEK7EVuRC_RE">
 
 <?!= include('Styles'); ?>
 </head>
 <body>
+<!-- Fixed at the document level, not inside #app — see .statusbar in Styles for why. -->
+<div class="statusbar"></div>
 <div id="app"></div>
 
 <!--
@@ -25,6 +30,7 @@
 <?!= include('Announcements'); ?>
 <?!= include('Community'); ?>
 <?!= include('Events'); ?>
+<?!= include('Attendance'); ?>
 <?!= include('Resources'); ?>
 <?!= include('Pulse'); ?>
 <?!= include('Reflection'); ?>

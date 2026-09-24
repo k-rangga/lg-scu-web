@@ -126,19 +126,15 @@ function reflectionScreen(){
 
   const tab = (fn,label,on) => `<div onclick="app.${fn}()" style="cursor:pointer;flex:1;text-align:center;padding:12px;border-radius:100px;font-size:14px;font-weight:600;background:${on?'#2563eb':'transparent'};color:${on?'#ffffff':'#64748b'};transition:all .2s ease;">${label}</div>`;
 
-  // Reflections land in the second phase of sign-in. The length check keeps an
-  // optimistically-added local reflection visible instead of hidden by skeletons.
-  const isLoadingReflections = S.isLoadingExtended && !DATA.reflections.length;
-
-  return `<div class="screen" style="background:#f1f5f9;">
-    <div style="flex-shrink:0;background:#f1f5f9;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;">
-      <div>
-        <div class="serif" style="font-size:26px;font-weight:700;letter-spacing:-.4px;color:#0f172a;">Reflections</div>
-        <div style="font-size:14px;color:#64748b;margin-top:1px;">Shared reflections from every life group</div>
-      </div>
-    </div>
-    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+  return `<div class="screen" style="background:#ffffff;">
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="flex:1;min-height:0;background:#f4f6f9;padding:0 0 140px;overflow-y:auto;">
       <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
+      <div style="background:#ffffff;color:#2b2b2b;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;">
+        <div>
+          <div class="serif" style="font-size:26px;font-weight:700;letter-spacing:-.4px;color:#2b2b2b;">Reflections</div>
+          <div style="font-size:14px;color:#8f8a80;margin-top:1px;">Shared reflections from every small group</div>
+        </div>
+      </div>
       <div style="padding:0 22px;margin-top:6px;">
         <div style="display:flex;background:#ffffff;padding:4px;border-radius:100px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
           ${tab("setTabAll","All reflections",S.reflectionTab==="all")}
@@ -146,13 +142,48 @@ function reflectionScreen(){
         </div>
       </div>
       <div style="padding:0 22px;margin-top:16px;display:flex;flex-direction:column;">
-        ${isLoadingReflections ? skeletonList(3) : (rows||emptyRow("No reflections yet"))}
+        ${rows||emptyRow("No reflections yet")}
       </div>
     </div>
-    <div onclick="app.openReflectionForm()" style="position:absolute;right:22px;bottom:90px;width:60px;height:60px;border-radius:50%;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 10px 28px rgba(37,99,235,0.4);z-index:40;">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-    </div>
+    ${reflectionFab()}
   </div>`;
+}
+
+/* The "+" rotates 45° into an "x" — same glyph, no separate icon swap needed.
+   The three options fan out above it with a pre-picked visibility each; the
+   write screen still lets the author change it before submitting.
+
+   render() replaces the whole screen's innerHTML on every pass, so a CSS
+   `transition` never has a "before" state to animate from — every element is
+   born already at its final style. The open state instead plays a @keyframes
+   animation on mount (see .fab-icon-rotate / .fab-menu in Styles), and
+   overlayAnim suppresses a replay if a background refresh re-renders while
+   the menu is still open. Closing snaps instantly, same as every other sheet
+   in this app. */
+function reflectionFab(){
+  const open = S.reflectionFabOpen;
+  const iconAnim = fabIconAnim("reflectionFab", open);
+  const anim = overlayAnim("reflectionFab", open);
+
+  const option = (visibility, label, iconName) => `<div onclick="app.chooseReflectionType('${visibility}')" style="display:flex;align-items:center;justify-content:flex-end;gap:10px;cursor:pointer;">
+      <span style="font-size:14px;font-weight:600;color:#2b2b2b;background:#ffffff;padding:9px 16px;border-radius:100px;box-shadow:0 6px 16px -10px rgba(17,24,32,.35);white-space:nowrap;">${label}</span>
+      <div style="flex-shrink:0;width:44px;height:44px;border-radius:50%;background:#ffffff;color:#2563eb;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px -10px rgba(17,24,32,.35);">${micon(iconName, 20)}</div>
+    </div>`;
+
+  // Bottom offsets track env(safe-area-inset-bottom) the same way bottomNav's own
+  // padding does (see NAV_CONTENT_HEIGHT there) — a fixed px bottom here would sit
+  // fine on a home-indicator-less device and overlap the nav bar on one that has it.
+  const menu = open ? `<div onclick="app.toggleReflectionFab()" style="position:absolute;inset:0;z-index:39;"></div>
+    <div class="fab-menu${anim}" style="position:absolute;right:22px;bottom:calc(148px + env(safe-area-inset-bottom));z-index:41;display:flex;flex-direction:column;align-items:flex-end;gap:12px;">
+      ${option("Private","Add private reflection","lock")}
+      ${option("Group","Add group reflection","groups")}
+      ${option("Public","Share to everyone","public")}
+    </div>` : "";
+
+  return `${menu}
+    <div onclick="app.toggleReflectionFab()" style="position:absolute;right:22px;bottom:calc(76px + env(safe-area-inset-bottom));width:60px;height:60px;border-radius:50%;background:#2563eb;color:#ffffff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 10px 28px rgba(37,99,235,0.4);z-index:40;">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="${iconAnim.trim()}" style="transform:rotate(${open?'45deg':'0deg'});"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    </div>`;
 }
 
 function reflectionThreadScreen() {
@@ -253,16 +284,16 @@ function reflectionThreadScreen() {
   const sendBg = hasText ? '#2563eb' : '#f2f2f2';
   const sendColor = hasText ? '#ffffff' : '#8d8d8d';
 
-  return `<div class="screen" style="background:#f1f5f9;display:flex;flex-direction:column;height:100%;overflow:hidden;">
-    <div style="flex-shrink:0;background:#f1f5f9;padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;align-items:center;gap:12px;z-index:10;">
-      <div onclick="app.backReflection()" style="cursor:pointer;width:36px;height:36px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
+  return `<div class="screen" style="background:#ffffff;display:flex;flex-direction:column;height:100%;overflow:hidden;">
+    <div style="flex-shrink:0;background:#ffffff;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;z-index:10;">
+      <div onclick="app.backReflection()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#f4f6f9;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
       <div>
-        <div class="serif" style="font-size:22px;font-weight:700;color:#0f172a;letter-spacing:-.3px;">Thread</div>
-        <div style="font-size:12px;color:#64748b;margin-top:1px;">${replyCountStr}</div>
+        <div class="serif" style="font-size:26px;font-weight:700;color:#2b2b2b;letter-spacing:-.4px;">Thread</div>
+        <div style="font-size:14px;color:#8f8a80;margin-top:1px;">${replyCountStr}</div>
       </div>
     </div>
-    
-    <div id="threadScroll" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-top:8px;padding-bottom:24px;">
+
+    <div id="threadScroll" style="background:#f4f6f9;flex:1;overflow-y:auto;padding-top:8px;padding-bottom:24px;">
       ${mainPostHtml}
       <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#94a3b8;margin:20px 0 12px 16px;">Discussion</div>
       ${repliesHtml || emptyRow("Be the first to reply")}
@@ -280,52 +311,112 @@ function reflectionThreadScreen() {
   </div>`;
 }
 
+/* Visibility's badge palette — the same bg/color pairs the feed card and thread
+   header spell out inline, plus the Material Symbol the FAB menu uses for each,
+   so the composer's status bar reads as the same badge the post will carry. */
+const VIS_STYLE = {
+  Public:  { bg:'#dcfce7', color:'#166534', icon:'public' },
+  Group:   { bg:'#dbeafe', color:'#1e40af', icon:'groups' },
+  Private: { bg:'#f1f5f9', color:'#475569', icon:'lock' }
+};
+
+/* A writing surface, not a form: Cancel / options / Submit across the top, an
+   untitled-note title and a body that takes the rest of the screen. Visibility
+   and the attachment live in reflectionOptionsSheet() below, reachable from the
+   "..." button and from the status bar pinned at the bottom.
+
+   Three flex bands (header / scroller / status bar) rather than one tall
+   scroller — same shape as the thread screen, and for the same reason: on iOS
+   a bottom bar that is a flex *sibling* of the scroller stays put when the
+   keyboard opens, where an absolutely positioned one gets shoved off-screen. */
 function reflectionNewScreen(){
   const valid = S.rTitle.trim() && S.rDesc.trim();
   const isEditing = !!S.editingReflectionId;
-  const visBtn = (fn,label,on) => `<div onclick="app.${fn}()" style="cursor:pointer;flex:1;text-align:center;padding:12px 4px;border-radius:12px;font-size:14px;font-weight:600;background:${on?'#eff6ff':'#ffffff'};color:${on?'#2563eb':'#8d8d8d'};border:1.5px solid ${on?'#2563eb':'#d1d1d1'};">${label}</div>`;
+  const busy = S.isSubmittingReflection;
+  const vis = VIS_STYLE[S.rVisibility] || VIS_STYLE.Public;
 
-  const submitBtnContent = S.isSubmittingReflection
-    ? `<div class="spinner"></div><span style="margin-left:10px;">${isEditing ? 'Saving...' : 'Submitting...'}</span>`
-    : (isEditing ? `Save changes` : `Submit reflection`);
+  const submitBtnContent = busy
+    ? `<div class="spinner"></div><span style="margin-left:8px;">${isEditing ? 'Saving...' : 'Submitting...'}</span>`
+    : (isEditing ? `Save` : `Submit`);
 
-  /* Attachments are not editable — the file stays exactly as posted. */
-  const attachmentBlock = isEditing ? "" : `
-          <div style="font-size:12px;font-weight:700;color:#8d8d8d;letter-spacing:.4px;text-transform:uppercase;margin:16px 0 8px;">Attach Document (Optional)</div>
-          <input type="file" onchange="app.handleFileSelect(this)" style="width:100%;padding:10px;border-radius:12px;border:1px solid #d1d1d1;background:#f2f2f2;font-size:14px;color:#111820;"/>
-          <div style="font-size:11px;color:#8d8d8d;margin-top:4px;">Max file size 12 MB</div>
-          <div id="fileUploadStatus" style="font-size:12px;color:#2563eb;margin-top:4px;font-weight:600;">${S.rFile ? 'Selected: ' + S.rFile.name : ''}</div>`;
+  /* Attachments are not editable — the file stays exactly as posted — so the
+     composer never advertises one on the edit path. */
+  const fileChip = (!isEditing && S.rFile) ? `
+        <span style="display:inline-flex;align-items:center;gap:5px;max-width:190px;background:#f1f5f9;color:#475569;border-radius:100px;padding:6px 12px;font-size:13px;font-weight:700;">
+          ${micon("attach_file",15)}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(S.rFile.name)}</span>
+        </span>` : "";
 
-  return `<div class="screen" style="background:#f2f2f2;">
-    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 10px;">
-      ${isEditing
-        ? subHeader("cancelEditReflection","Edit reflection","Update what you shared")
-        : subHeader("backReflection","New reflection","Share what stood out this session")}
-    </div>
-    <div class="scr fill" style="padding:0 0 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
-      <div style="padding:0 22px;margin-top:10px;">
-        <div style="background:#ffffff;border-radius:18px;padding:18px;box-shadow:0 6px 20px -14px rgba(17,24,32,.2);">
-          <div style="font-size:12px;font-weight:700;color:#8d8d8d;letter-spacing:.4px;text-transform:uppercase;margin:0 0 8px;">Title <span style="color:#f39c12;">*</span></div>
-          <input id="rTitleInput" oninput="app.onRTitle(this.value)" value="${esc(S.rTitle)}" placeholder="Give your reflection a title" style="width:100%;height:48px;border-radius:12px;border:1px solid #d1d1d1;background:#f2f2f2;padding:0 14px;font-size:15px;color:#111820;"/>
-          
-          <div style="font-size:12px;font-weight:700;color:#8d8d8d;letter-spacing:.4px;text-transform:uppercase;margin:16px 0 8px;">Description <span style="color:#f39c12;">*</span></div>
-          <textarea id="rDescInput" oninput="app.onRDesc(this.value)" placeholder="What did God speak to you through this session?" style="width:100%;height:130px;border-radius:12px;border:1px solid #d1d1d1;background:#f2f2f2;padding:12px 14px;font-size:15px;color:#111820;resize:none;line-height:1.5;">${esc(S.rDesc)}</textarea>
-          
-          ${attachmentBlock}
+  /* With the sheet closed the attachment would otherwise be invisible from the
+     header, so the "..." carries a dot when one is staged. */
+  const attachDot = (!isEditing && S.rFile) ? `<span style="position:absolute;top:-1px;right:-1px;width:11px;height:11px;border-radius:50%;background:#2563eb;border:2px solid #ffffff;"></span>` : "";
 
-          <div style="font-size:12px;font-weight:700;color:#8d8d8d;letter-spacing:.4px;text-transform:uppercase;margin:18px 0 8px;">Visibility</div>
-          <div style="display:flex;gap:8px;">
-            ${visBtn("setPublic","Public",S.rVisibility==="Public")}
-            ${visBtn("setGroup","Group",S.rVisibility==="Group")}
-            ${visBtn("setPrivate","Private",S.rVisibility==="Private")}
-          </div>
+  return `<div class="screen" style="background:#ffffff;">
+    <div style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:calc(10px + env(safe-area-inset-top)) 18px 10px;background:#ffffff;">
+      <div onclick="app.cancelCompose()" style="cursor:pointer;font-size:16px;color:#404040;padding:6px 2px;">Cancel</div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div onclick="app.openReflectionOptions()" class="icon-btn" style="position:relative;cursor:pointer;width:40px;height:40px;border-radius:50%;border:1.5px solid #d1d1d1;background:#ffffff;color:#8d8d8d;display:flex;align-items:center;justify-content:center;">
+          ${micon("more_horiz",22)}${attachDot}
         </div>
-      </div>
-      <div style="padding:0 22px;margin-top:18px;">
-        <div id="submitReflectionBtn" onclick="!S.isSubmittingReflection && app.submitReflection()" style="cursor:${!valid || S.isSubmittingReflection ? 'not-allowed' : 'pointer'};height:52px;border-radius:14px;background:${!valid || S.isSubmittingReflection ? '#8d8d8d' : '#2563eb'};color:#ffffff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;box-shadow:${!valid || S.isSubmittingReflection ? 'none' : '0 10px 24px rgba(37,99,235,0.4)'};transition:all 0.2s ease;">
+        <div id="submitReflectionBtn" onclick="!S.isSubmittingReflection && app.submitReflection()" style="cursor:${!valid || busy ? 'not-allowed' : 'pointer'};height:44px;padding:0 22px;border-radius:100px;background:${!valid || busy ? '#b9c2cf' : '#2563eb'};color:#ffffff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;white-space:nowrap;box-shadow:${!valid || busy ? 'none' : '0 6px 16px rgba(37,99,235,0.35)'};">
           ${submitBtnContent}
         </div>
       </div>
+    </div>
+
+    <div class="scr" style="flex:1;min-height:0;overflow-y:auto;padding:8px 22px 20px;display:flex;flex-direction:column;">
+      <input id="rTitleInput" oninput="app.onRTitle(this.value)" value="${esc(S.rTitle)}" placeholder="Title" style="flex-shrink:0;width:100%;border:none;background:transparent;padding:6px 0;font-size:32px;font-weight:700;letter-spacing:-.5px;color:#111820;"/>
+      <textarea id="rDescInput" oninput="app.onRDesc(this.value)" placeholder="What did God speak to you through this session?" style="flex:1;min-height:220px;width:100%;border:none;background:transparent;padding:8px 0;font-size:18px;line-height:1.55;color:#111820;resize:none;">${esc(S.rDesc)}</textarea>
+    </div>
+
+    <div onclick="app.openReflectionOptions()" style="flex-shrink:0;cursor:pointer;display:flex;align-items:center;gap:8px;background:#ffffff;border-top:1px solid #f1f5f9;padding:10px 22px calc(10px + env(safe-area-inset-bottom));">
+      <span style="display:inline-flex;align-items:center;gap:5px;background:${vis.bg};color:${vis.color};border-radius:100px;padding:6px 12px;font-size:13px;font-weight:700;">
+        ${micon(vis.icon,15)}${esc(S.rVisibility)}
+      </span>
+      ${fileChip}
+    </div>
+  </div>`;
+}
+
+/* The composer's metadata, moved off the writing surface. Opened from the "..."
+   in the header and from the status bar at the bottom of the same screen.
+   Picking a visibility deliberately leaves the sheet up — the attachment is
+   right below it, and closing on every tap would make staging both fiddly. */
+function reflectionOptionsSheet(){
+  // Swipe-back leaves reflectionNew via go() without passing through any of the
+  // cancel handlers, so the screen itself — not the flag alone — gates this.
+  const open = S.screen === "reflectionNew" && S.reflectionOptionsOpen;
+  const anim = overlayAnim("reflectionOptions", open);
+  if (!open) return "";
+
+  const isEditing = !!S.editingReflectionId;
+  const visBtn = (fn,label,on) => `<div onclick="app.${fn}()" style="cursor:pointer;flex:1;height:52px;display:flex;align-items:center;justify-content:center;border-radius:14px;font-size:15px;font-weight:600;background:${on?'#2563eb':'#ffffff'};color:${on?'#ffffff':'#404040'};border:1.5px solid ${on?'#2563eb':'#d1d1d1'};">${label}</div>`;
+
+  const attachInner = S.rFile
+    ? `<div style="display:flex;align-items:center;justify-content:center;gap:10px;">
+         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#2563eb;font-weight:600;">${esc(S.rFile.name)}</span>
+         <span onclick="event.stopPropagation();app.clearReflectionFile()" style="cursor:pointer;flex-shrink:0;color:#8d8d8d;display:flex;align-items:center;">
+           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+         </span>
+       </div>`
+    : `Attach a document &middot; max 12 MB`;
+
+  /* Attachments are not editable — the file stays exactly as posted. */
+  const attachBlock = isEditing ? "" : `
+      <input type="file" id="rFileInput" style="display:none;" onchange="app.handleFileSelect(this)"/>
+      <div onclick="document.getElementById('rFileInput').click()" style="cursor:pointer;margin-top:16px;border:1.5px dashed #d1d1d1;border-radius:14px;padding:16px;text-align:center;font-size:14px;color:#8d8d8d;">
+        ${attachInner}
+      </div>`;
+
+  return `<div class="sheet-backdrop${anim}" onclick="app.closeReflectionOptions()">
+    <div class="sheet${anim}" onclick="event.stopPropagation()" style="padding-bottom:calc(24px + env(safe-area-inset-bottom));">
+      <div class="grab"></div>
+      <div style="font-size:12px;font-weight:700;color:#8d8d8d;letter-spacing:.4px;text-transform:uppercase;margin:0 0 12px;">Who can see this</div>
+      <div style="display:flex;gap:10px;">
+        ${visBtn("setPublic","Public",S.rVisibility==="Public")}
+        ${visBtn("setGroup","Group",S.rVisibility==="Group")}
+        ${visBtn("setPrivate","Private",S.rVisibility==="Private")}
+      </div>
+      ${attachBlock}
     </div>
   </div>`;
 }
@@ -345,42 +436,46 @@ function fileErrorModal(){
   </div>`;
 }
 
-/* Author-only actions for a reflection or a reply. Rendered on every screen from
-   render() and self-suppressing, like every other sheet in the app — a dropdown
-   anchored to the kebab would be destroyed by the next full innerHTML replace. */
+/* Author-only actions for a reflection, a reply, or a Community post (see
+   kebabBtn's kind argument). Rendered on every screen from render() and
+   self-suppressing, like every other sheet in the app — a dropdown anchored
+   to the kebab would be destroyed by the next full innerHTML replace. */
 function postActionSheet(){
+  const anim = overlayAnim("postActions", !!S.actionSheet);
   if (!S.actionSheet) return "";
-  const isReply = S.actionSheet.kind === "reply";
-  const noun = isReply ? "reply" : "reflection";
+  const kind = S.actionSheet.kind;
+  const noun = kind === "reply" ? "reply" : (kind === "post" ? "post" : "reflection");
 
   const row = (onclick, color, icon, label) => `
-    <div onclick="${onclick}" style="cursor:pointer;display:flex;align-items:center;gap:18px;padding:18px 4px;color:${color};">
+    <div onclick="${onclick}" style="cursor:pointer;display:flex;align-items:center;gap:14px;padding:15px 4px;color:${color};">
       ${icon}
-      <span style="font-size:19px;font-weight:700;">${label}</span>
+      <span style="font-size:16px;font-weight:600;">${label}</span>
     </div>`;
 
-  const pencil = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
-  const trash = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
+  const pencil = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+  const trash = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
 
-  return `<div class="sheet-backdrop" onclick="app.closePostActions()">
-    <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:calc(20px + env(safe-area-inset-bottom));">
+  return `<div class="sheet-backdrop${anim}" onclick="app.closePostActions()">
+    <div class="sheet${anim}" onclick="event.stopPropagation()" style="padding-bottom:calc(20px + env(safe-area-inset-bottom));">
       <div class="grab"></div>
       ${row("app.startEditFromActions()", "#2563eb", pencil, "Edit " + noun)}
       <div style="height:1px;background:#f1f5f9;margin:0 -22px;"></div>
       ${row("app.askDeleteFromActions()", "#ef4444", trash, "Delete " + noun)}
-      <div onclick="app.closePostActions()" style="cursor:pointer;margin-top:14px;height:56px;border-radius:16px;background:#f1f5f9;color:#64748b;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:700;">Cancel</div>
+      <div onclick="app.closePostActions()" style="cursor:pointer;margin-top:14px;height:48px;border-radius:14px;background:#f1f5f9;color:#64748b;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;">Cancel</div>
     </div>
   </div>`;
 }
 
 /* The app has no confirm helper — only native alert() — so deletion gets its own sheet. */
 function confirmDeleteSheet(){
+  const anim = overlayAnim("confirmDelete", !!S.confirmDelete);
   if (!S.confirmDelete) return "";
-  const noun = S.confirmDelete.kind === "reply" ? "reply" : "reflection";
+  const dKind = S.confirmDelete.kind;
+  const noun = dKind === "reply" ? "reply" : (dKind === "post" ? "post" : "reflection");
   const extra = noun === "reflection" ? " Its replies will be removed too." : "";
 
-  return `<div class="sheet-backdrop" onclick="app.cancelDelete()">
-    <div class="sheet" onclick="event.stopPropagation()" style="text-align:center;padding-bottom:calc(30px + env(safe-area-inset-bottom));">
+  return `<div class="sheet-backdrop${anim}" onclick="app.cancelDelete()">
+    <div class="sheet${anim}" onclick="event.stopPropagation()" style="text-align:center;padding-bottom:calc(30px + env(safe-area-inset-bottom));">
       <div class="grab"></div>
       <div style="width:48px;height:48px;border-radius:50%;background:#fee2e2;color:#ef4444;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
@@ -400,31 +495,55 @@ SCREENS.reflectionThread = reflectionThreadScreen;
 SCREENS.reflectionNew = reflectionNewScreen;
 
 Object.assign(window.app, {
-  goReflection: () => go("reflection"),
-  openReflectionForm: () => {
+  goReflection: () => { S.reflectionFabOpen = false; go("reflection"); },
+  toggleReflectionFab: () => { S.reflectionFabOpen = !S.reflectionFabOpen; render(); },
+  // Each option carries its own visibility straight into the composer;
+  // the visibility picker there still lets the author change it before submitting.
+  chooseReflectionType: (visibility) => {
+    S.reflectionFabOpen = false;
+    app.openReflectionForm(visibility);
+  },
+  openReflectionForm: (visibility) => {
     // A stale editing id here would make the composer overwrite the edited post.
     S.editingReflectionId = null;
-    S.rTitle = ""; S.rDesc = ""; S.rVisibility = "Public"; S.rFile = null;
+    S.rTitle = ""; S.rDesc = ""; S.rVisibility = visibility || "Public"; S.rFile = null;
+    S.reflectionOptionsOpen = false;
     go("reflectionNew");
   },
   backReflection: () => {
     const target = S.screen === "reflectionThread" ? (S.threadOrigin || "reflection") : "reflection";
     S.activeReflectionId = null; S.replyText = ""; S.quoteContext = null;
     S.editingReplyId = null;
+    S.reflectionFabOpen = false;
     S.editingReflectionId = null;
+    S.reflectionOptionsOpen = false;
     S.threadOrigin = "reflection";
     go(target);
   },
 
+  /* One Cancel serves both ways into the composer — the FAB (new) and the
+     kebab's Edit (existing post) — since each needs its own state cleanup. */
+  cancelCompose: () => {
+    if (S.editingReflectionId) app.cancelEditReflection();
+    else app.backReflection();
+  },
+
+  openReflectionOptions: () => { S.reflectionOptionsOpen = true; render(); },
+  closeReflectionOptions: () => { S.reflectionOptionsOpen = false; render(); },
+  clearReflectionFile: () => { S.rFile = null; render(); },
+
   onRTitle: (v) => { S.rTitle = v; app.updateSubmitButtonState(); },
   onRDesc: (v) => { S.rDesc = v; app.updateSubmitButtonState(); },
 
+  /* Poked directly instead of re-rendering: render() replaces the whole screen,
+     which would drop focus and close the keyboard on every keystroke. Keep these
+     values in step with the Submit pill in reflectionNewScreen(). */
   updateSubmitButtonState: () => {
     const valid = S.rTitle.trim() && S.rDesc.trim();
     const btn = document.getElementById("submitReflectionBtn");
     if (btn) {
-      btn.style.background = valid ? '#2563eb' : '#8d8d8d';
-      btn.style.boxShadow = valid ? '0 10px 24px rgba(37,99,235,0.4)' : 'none';
+      btn.style.background = valid ? '#2563eb' : '#b9c2cf';
+      btn.style.boxShadow = valid ? '0 6px 16px rgba(37,99,235,0.35)' : 'none';
       btn.style.cursor = valid ? 'pointer' : 'not-allowed';
     }
   },
@@ -458,6 +577,7 @@ Object.assign(window.app, {
     if (!a) return;
     S.actionSheet = null;
     if (a.kind === "reply") app.startEditReply(a.refId, a.id);
+    else if (a.kind === "post") app.startEditPost(a.id);
     else app.startEditReflection(a.id);
   },
 
@@ -476,6 +596,7 @@ Object.assign(window.app, {
     if (!d) return;
     S.confirmDelete = null;
     if (d.kind === "reply") app.deleteReplyNow(d.refId, d.id);
+    else if (d.kind === "post") app.deletePostNow(d.id);
     else app.deleteReflectionNow(d.id);
   },
 
@@ -487,12 +608,14 @@ Object.assign(window.app, {
     S.rDesc = r.fullText || r.text || "";
     S.rVisibility = r.visibility || "Public";
     S.rFile = null;
+    S.reflectionOptionsOpen = false;
     go("reflectionNew");
   },
 
   cancelEditReflection: () => {
     S.editingReflectionId = null;
     S.rTitle = ""; S.rDesc = ""; S.rVisibility = "Public"; S.rFile = null;
+    S.reflectionOptionsOpen = false;
     go("reflection");
   },
 
@@ -763,8 +886,6 @@ Object.assign(window.app, {
     if (file.size > 12 * 1024 * 1024) {
       input.value = "";
       S.rFile = null;
-      const statusEl = document.getElementById("fileUploadStatus");
-      if(statusEl) statusEl.innerText = "";
       S.fileErrorMessage = "The selected file is larger than 12MB. Please choose a smaller file and try again.";
       S.fileErrorModalOpen = true;
       render();
@@ -774,8 +895,10 @@ Object.assign(window.app, {
     const reader = new FileReader();
     reader.onload = function(e) {
       S.rFile = { name: file.name, data: e.target.result };
-      const statusEl = document.getElementById("fileUploadStatus");
-      if(statusEl) statusEl.innerText = "Selected: " + file.name;
+      // Safe to re-render here, unlike while typing: the user is coming back from
+      // the OS file picker, so there is no caret or keyboard to preserve, and the
+      // title/body text already lives in S.
+      render();
     };
     reader.onerror = function() {
       input.value = "";
@@ -813,6 +936,7 @@ Object.assign(window.app, {
 
       S.editingReflectionId = null;
       S.rTitle = ""; S.rDesc = ""; S.rVisibility = "Public"; S.rFile = null;
+      S.reflectionOptionsOpen = false;
       go("reflection");
 
       if (typeof google !== 'undefined' && google.script && google.script.run) {
@@ -869,7 +993,8 @@ Object.assign(window.app, {
 
     DATA.reflections.unshift(newRefObj);
     S.rTitle=""; S.rDesc=""; S.rVisibility="Public"; S.rFile=null;
-    S.reflectionTab = payload.visibility==="Public" || payload.visibility==="Group" ? "all" : "mine"; 
+    S.reflectionOptionsOpen = false;
+    S.reflectionTab = payload.visibility==="Public" || payload.visibility==="Group" ? "all" : "mine";
     S.isSubmittingReflection = false;
     go("reflection");
 

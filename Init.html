@@ -16,12 +16,14 @@ const HAS_GAS = !(typeof google === 'undefined' || !google.script || !google.scr
 
 if (!HAS_GAS) {
   DATA = {
-    user: { name: "Kalaka Rangga", initials: "KR", greetingDate: "Wednesday, Aug 12", role: "Member", email: "kalakarangga@gmail.com" },
+    user: { name: "Kalaka Rangga", initials: "KR", greetingDate: "Wednesday, 12 August", role: "Member", email: "kalakarangga@gmail.com" },
     serviceUpdate: { enabled: true, theme: "Immeasurably More", module: "Module 1", note: "Remember to review your workshop materials before Thursday." },
     verse: { text: "Trust in the Lord with all your heart.", ref: "Proverbs 3:5" },
     announcements: [],
-    nextEvent: { title: "Gathering", date: "Aug 15", time: "7:00 PM", location: "Online", summary: "Weekly meeting", badge: "UPCOMING" },
-    group: { name: "The Stewards" },
+    // startMs sits inside the mentor attendance window (see Events) so the card
+    // can be previewed by flipping user.role to "Mentor" in the console.
+    nextEvent: { eventId: "G1|mock", attendance: null, title: "Gathering", date: "Aug 15", time: "7:00 PM", location: "Online", summary: "Weekly meeting", badge: "UPCOMING", startMs: Date.now() + 5 * 60 * 1000 },
+    group: { name: "The Stewards", memberCount: 5 },
     members: [
       { name: "Rachel Ng", initials: "RN", role: "Co-leader", phone: "" },
       { name: "Sarah Lim", initials: "SL", role: "Member", phone: "" },
@@ -61,10 +63,10 @@ if (savedToken) {
         S.editEmail    = res.user.email;
         S.editPassword = "";
         DATA = res.data;
-        // Lean payload, same as sign-in. go("home") fires refreshData(), whose
-        // full getData is what backfills the missing keys and clears this.
-        S.isLoadingExtended = true;
-        go("home");
+        noteServerClock(res.data);
+        // Full getData payload — notifications, reflections, and posts are
+        // already in DATA, so Home renders complete on the first paint.
+        go("home", { skipRefresh: true });
       } else {
         // Token revoked, user removed, or the row went INACTIVE — start over.
         clearToken();

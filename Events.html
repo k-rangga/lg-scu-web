@@ -40,19 +40,19 @@ function eventsScreen(){
         <span class="serif" style="font-size:17px;font-weight:700;color:#111820;line-height:1.1;">${esc(e.day || "1")}</span>
       </div>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:15px;font-weight:600;color:#111820;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.title)}</div>
-        <div style="font-size:13px;color:#8d8d8d;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.time)} · ${esc(e.location)}</div>
+        <div style="font-size:15px;font-weight:700;color:#111820;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.title)}</div>
+        <div style="font-size:12px;color:#8d8d8d;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.time)} · ${esc(e.location)}</div>
       </div>
       <div style="color:#8d8d8d;flex-shrink:0;">${I.chev}</div>
     </div>`).join("");
 
-  return `<div class="screen" style="background:#f2f2f2;">
-    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 20px;">
-      <div style="font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#8d8d8d;">Schedule</div>
-      <div class="serif" style="font-size:28px;font-weight:600;letter-spacing:-.5px;margin-top:2px;">Events</div>
-    </div>
-    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 140px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+  return `<div class="screen" style="background:#ffffff;">
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="flex:1;min-height:0;background:#f4f6f9;padding:0 0 140px;overflow-y:auto;">
       <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
+      <div style="background:#ffffff;color:#2b2b2b;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;">
+        <div class="serif" style="font-size:26px;font-weight:700;letter-spacing:-.4px;">Events</div>
+        <div style="font-size:14px;color:#8f8a80;margin-top:3px;">See past and upcoming event</div>
+      </div>
       <div style="padding:0 22px;">
         ${nextUpCard}
       </div>
@@ -64,17 +64,135 @@ function eventsScreen(){
   </div>`;
 }
 
+/* ---- Mentor attendance card -------------------------------------------
+   Shown on the event detail screen to mentors only, and only once the event
+   is within ATT_LEAD_MS of starting. It does not close again afterwards — a
+   mentor who fills attendance late still needs the way in. An event whose
+   time cell the server could not read arrives with startMs 0 and never
+   qualifies.
+
+   Once attendance has been recorded the card swaps to a summary of what was
+   taken, and stays regardless of the timing gate — a mentor looking back at
+   the event should still see the result.
+   ---------------------------------------------------------------------- */
+const ATT_LEAD_MS = 10 * 60 * 1000;
+
+function attendanceOpensInMs(ev){
+  const startMs = Number((ev && ev.startMs) || 0);
+  if (!startMs) return Infinity;
+  return (startMs - ATT_LEAD_MS) - nowMs();
+}
+
+function viewerIsMentor(){
+  return !!(DATA && DATA.user && String(DATA.user.role || "").trim().toLowerCase() === "mentor");
+}
+
+/* "Alpha Group · 9 members" — the roster the attendance screen will show, so
+   both read the same mentorGroup() (Attendance.html). A group whose size can't
+   be resolved renders its name alone rather than a wrong count. */
+function attendanceGroupLine(){
+  const g = mentorGroup();
+  const count = g.members.length;
+  return count > 0 ? `${g.name} · ${count} member${count === 1 ? "" : "s"}` : g.name;
+}
+
+function attendanceCard(ev){
+  const att = ev && ev.attendance;
+
+  /* A member gets neither the roll-call CTA nor the group totals — only how
+     they themselves were marked, and only once that has happened. Nobody
+     marked (no row of their own) means there is nothing to tell them. */
+  if (!viewerIsMentor()) {
+    return (att && att.recorded && att.myStatus) ? memberAttendanceCard(att) : "";
+  }
+
+  if (att && att.recorded) return attendanceRecordedCard(att);
+  if (attendanceOpensInMs(ev) > 0) return "";
+  return `
+      <div onclick="app.openEventAttendance()" style="cursor:pointer;margin-top:16px;background:#1c3249;border-radius:24px;padding:20px;display:flex;align-items:center;gap:16px;box-shadow:0 12px 32px -14px rgba(28,50,73,.55);">
+        <div style="width:48px;height:48px;border-radius:14px;background:rgba(244,208,63,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          ${micon('groups', 24, '#f4d03f')}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#f4d03f;">
+            <span style="width:6px;height:6px;border-radius:50%;background:#f4d03f;flex-shrink:0;"></span>Attendance is open
+          </div>
+          <div style="font-size:17px;font-weight:700;color:#ffffff;margin-top:4px;">Fill your group's attendance</div>
+          <div style="font-size:13px;color:#d1d1d1;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(attendanceGroupLine())}</div>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;">${micon('chevron_right', 22, '#f4d03f')}</div>
+      </div>`;
+}
+
+/* What the card becomes after a save. Edit re-opens the attendance screen over
+   the saved record, which takes a fetch — hence the loading label. */
+function attendanceRecordedCard(att){
+  return `
+      <div style="margin-top:16px;background:#ffffff;border:1px solid #e2e8f0;border-radius:20px;padding:18px;box-shadow:0 6px 24px -14px rgba(17,24,32,.12);">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="width:42px;height:42px;border-radius:50%;background:#dcfce7;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            ${micon('check', 22, '#16a34a')}
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:17px;font-weight:700;color:#111820;">Attendance recorded</div>
+            <div style="font-size:13px;color:#8d8d8d;margin-top:2px;">${att.present} present · ${att.absent} absent</div>
+          </div>
+          <div onclick="app.editEventAttendance()" style="cursor:${S.attLoadingEdit ? 'progress' : 'pointer'};flex-shrink:0;font-size:15px;font-weight:600;color:${S.attLoadingEdit ? '#8d8d8d' : '#2563eb'};">${S.attLoadingEdit ? 'Loading...' : 'Edit'}</div>
+        </div>
+        <div style="margin-top:14px;">${attendanceBar(att.present, att.absent)}</div>
+      </div>`;
+}
+
+/* The member's view of the same event: what their mentor marked them as, and
+   nothing else — no group totals, and not the note the mentor left. Read-only
+   by construction, with no handler at all rather than one that does nothing. */
+function memberAttendanceCard(att){
+  const u = (DATA && DATA.user) || {};
+  const present = att.myStatus === "present";
+  const tint = present ? "#e8f7ee" : "#fdecec";
+  const ink  = present ? "#16a34a" : "#dc2626";
+
+  return `
+      <div style="margin-top:16px;background:#ffffff;border:1px solid #e2e8f0;border-radius:20px;padding:16px;display:flex;align-items:center;gap:14px;box-shadow:0 6px 24px -14px rgba(17,24,32,.12);">
+        <div style="width:44px;height:44px;border-radius:50%;background:#2563eb;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#ffffff;flex-shrink:0;">${esc(u.initials || getInitials(u.name))}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#8d8d8d;">Your attendance</div>
+          <div style="font-size:17px;font-weight:700;color:#111820;margin-top:2px;">Marked by your mentor</div>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;background:${tint};color:${ink};border-radius:14px;padding:12px 16px;font-size:15px;font-weight:700;">
+          <span style="width:7px;height:7px;border-radius:50%;background:${ink};flex-shrink:0;"></span>${present ? "Present" : "Absent"}
+        </div>
+      </div>`;
+}
+
+/* A mentor already sitting on this screen at T-11min would otherwise never see
+   the card appear — render() only runs on navigation or a refresh. One timer,
+   armed for the exact moment it opens, re-renders on the spot. Re-armed on
+   every render of this screen so it never stacks; skipped past 12h because a
+   setTimeout delay over 2^31 ms overflows and fires immediately. */
+let attOpenTimer = null;
+function scheduleAttendanceOpen(ev){
+  clearTimeout(attOpenTimer);
+  attOpenTimer = null;
+  const ms = attendanceOpensInMs(ev);
+  if (viewerIsMentor() && ms > 0 && ms < 12 * 60 * 60 * 1000) {
+    attOpenTimer = setTimeout(render, ms + 500);
+  }
+}
+
 function eventDetailScreen(){
   const e = S.selectedEvent || {};
-  return `<div class="screen" style="background:#f2f2f2;">
-    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
-      <div onclick="app.backEvents()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);flex-shrink:0;">${I.back}</div>
-      <div>
-        <div style="font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#8d8d8d;">Event Details</div>
-        <div class="serif" style="font-size:24px;font-weight:600;color:#111820;line-height:1.2;letter-spacing:-.4px;margin-top:2px;">${esc(e.title)}</div>
+  scheduleAttendanceOpen(e);
+  return `<div class="screen" style="background:#ffffff;">
+    <div class="scr fill" style="flex:1;min-height:0;background:#f4f6f9;padding:0 0 140px;position:relative;overflow-y:auto;">
+      <div style="background:#ffffff;color:#2b2b2b;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
+        <div onclick="app.backEvents()" style="cursor:pointer;width:38px;height:38px;border-radius:50%;background:#f4f6f9;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);flex-shrink:0;">${I.back}</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#8f8a80;">Event Details</div>
+          <div class="serif" style="font-size:26px;font-weight:700;color:#2b2b2b;line-height:1.2;letter-spacing:-.4px;margin-top:2px;">${esc(e.title)}</div>
+        </div>
       </div>
-    </div>
-    <div class="scr fill" style="background:#f2f2f2;padding:20px 22px 140px;position:relative;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div style="padding:20px 22px 0;">
       <div style="background:#ffffff;border-radius:20px;padding:6px 18px;margin-top:4px;box-shadow:0 6px 24px -12px rgba(17,24,32,.1);border:1px solid #d1d1d1;">
         <div style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid #f2f2f2;">
           <div style="width:40px;height:40px;border-radius:12px;background:#eff6ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -96,6 +214,7 @@ function eventDetailScreen(){
           </div>
         </div>
       </div>
+      ${attendanceCard(e)}
 
       <div onclick="app.addEventToCalendar()" style="cursor:pointer;margin-top:16px;display:flex;align-items:center;justify-content:center;gap:8px;height:48px;border-radius:14px;background:#2563eb;color:#ffffff;font-size:15px;font-weight:600;box-shadow:0 8px 20px rgba(37,99,235,0.4);">
         ${I.cal.replace('stroke="#2563eb"','stroke="currentColor"')} Add to Calendar
@@ -103,9 +222,10 @@ function eventDetailScreen(){
 
       <div style="margin-top:30px;">
         <div class="serif" style="font-size:20px;font-weight:700;color:#111820;margin-bottom:12px;">About this event</div>
-        <div style="font-size:15px;color:#404040;line-height:1.65;white-space:pre-line;">${esc(e.summary || "No description provided.")}</div>
+        <div style="font-size:15px;color:#475569;line-height:1.55;white-space:pre-line;">${esc(e.summary || "No description provided.")}</div>
       </div>
 
+      </div>
     </div>
   </div>`;
 }
@@ -117,6 +237,11 @@ Object.assign(window.app, {
   openEvent: (i) => { S.selectedEvent = DATA.events[i]; go("eventDetail"); },
   openNextEvent: () => { if (DATA.nextEvent) { S.selectedEvent = DATA.nextEvent; go("eventDetail"); } },
   backEvents: () => go("events"),
+
+  // Entry points of the mentor attendance card — a blank roll call, or the
+  // saved record re-opened for editing (both live in Attendance).
+  openEventAttendance: () => app.startAttendance(S.selectedEvent),
+  editEventAttendance: () => app.openAttendanceEdit(S.selectedEvent),
 
   /* Opens Google Calendar's compose form prefilled with this event. The start
      and end come from the server (calStart/calEnd in Code.gs) because the

@@ -12,6 +12,9 @@ function unreadNotifCount(){
 }
 
 function notifBadge(type){
+  if (type === "reaction") {
+    return `<span style="position:absolute;right:-3px;bottom:-3px;width:20px;height:20px;border-radius:50%;background:#6d5bd0;color:#ffffff;display:flex;align-items:center;justify-content:center;border:2px solid #ffffff;">${micon("favorite", 11, "#ffffff")}</span>`;
+  }
   if (type === "mention") {
     return `<span style="position:absolute;right:-3px;bottom:-3px;width:20px;height:20px;border-radius:50%;background:#2563eb;color:#ffffff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #ffffff;">@</span>`;
   }
@@ -22,13 +25,8 @@ function notificationsScreen(){
   if (!DATA) return `<div class="screen"></div>`;
 
   const list = DATA.notifications || [];
-  // Notifications arrive in the second phase of sign-in, so an empty list while
-  // that is in flight means "not fetched yet" rather than "nothing here".
-  const isLoading = S.isLoadingExtended && !list.length;
   const unread = unreadNotifCount();
-  const subtitle = isLoading
-    ? "Loading…"
-    : (unread > 0 ? `${unread} unread` : (list.length ? "You're all caught up" : "Nothing here yet"));
+  const subtitle = unread > 0 ? `${unread} unread` : (list.length ? "You're all caught up" : "Nothing here yet");
 
   const markAll = unread > 0
     ? `<div onclick="app.markAllNotifsRead()" style="cursor:pointer;flex-shrink:0;font-size:13px;font-weight:700;color:#2563eb;">Mark all read</div>`
@@ -59,19 +57,19 @@ function notificationsScreen(){
     <div style="font-size:13px;color:#8d8d8d;margin-top:6px;line-height:1.5;">You'll be notified when someone replies to your reflection or mentions you.</div>
   </div>`;
 
-  return `<div class="screen" style="background:#f2f2f2;">
-    <div style="flex-shrink:0;background:#f2f2f2;color:#111820;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
-      <div onclick="app.backHome()" style="cursor:pointer;flex-shrink:0;width:38px;height:38px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
-      <div style="flex:1;min-width:0;">
-        <div class="serif" style="font-size:24px;font-weight:700;color:#111820;letter-spacing:-.3px;">Notifications</div>
-        <div style="font-size:13px;color:#8d8d8d;margin-top:1px;">${esc(subtitle)}</div>
-      </div>
-      ${markAll}
-    </div>
-    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="padding:0 0 40px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+  return `<div class="screen" style="background:#ffffff;">
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="flex:1;min-height:0;background:#f4f6f9;padding:0 0 40px;overflow-y:auto;">
       <div id="ptr-indicator"><div class="ptr-spinner"></div><span>Pull to refresh...</span></div>
+      <div style="background:#ffffff;color:#2b2b2b;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;gap:14px;">
+        <div onclick="app.backHome()" style="cursor:pointer;flex-shrink:0;width:38px;height:38px;border-radius:50%;background:#f4f6f9;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px -8px rgba(17,24,32,.2);">${I.back}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="serif" style="font-size:26px;font-weight:700;color:#2b2b2b;letter-spacing:-.4px;">Notifications</div>
+          <div style="font-size:14px;color:#8f8a80;margin-top:1px;">${esc(subtitle)}</div>
+        </div>
+        ${markAll}
+      </div>
       <div style="padding:0 22px;margin-top:6px;">
-        ${isLoading ? skeletonList(3) : (rows || emptyState)}
+        ${rows || emptyState}
       </div>
     </div>
   </div>`;
@@ -95,8 +93,12 @@ Object.assign(window.app, {
           .markNotificationRead({ userEmail: S.currentUserEmail, notifId: String(notifId) });
       }
     }
-    // openThread renders on its own; no separate render() needed for the flag above.
-    if (refId) {
+    // openThread and go() render on their own; no separate render() needed for
+    // the flag above. A reaction has no thread to open — it points at the
+    // Community feed instead.
+    if (n && n.type === "reaction") {
+      go("community");
+    } else if (refId) {
       app.openThread(refId);
     } else {
       render();

@@ -1,16 +1,52 @@
 <script>
 /* ==========================================================================
-   HOME — the dashboard: greeting, "now studying" hero, verse, quick actions,
-   announcements (rendered by the Announcements module), and next session.
+   HOME — the dashboard: greeting, next session, "now studying" module card,
+   verse, quick actions, and announcements (rendered by the Announcements
+   module).
    ========================================================================== */
 
-function quickAction(fn, label, badge, iconName){
-  return `<div onclick="app.${fn}()" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;">
-    <div style="position:relative;width:52px;height:52px;border-radius:16px;background:#ffffff;display:flex;align-items:center;justify-content:center;border:1px solid #d1d1d1;">
-      ${micon(iconName, 26, "#2563eb")}
-      ${badge ? `<div style="position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:100px;background:#ef4444;color:#ffffff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #f2f2f2;">!</div>` : ""}
+/* "Good morning/afternoon/evening" — read off the device's own clock rather
+   than the server's, since it is the person looking at the screen right now
+   whose time of day this greeting should match. */
+function daypartGreeting(){
+  const h = new Date().getHours();
+  if (h < 5) return "Good evening";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function firstName(name){
+  return String(name || "").trim().split(/\s+/)[0] || "";
+}
+
+function quickActionsGrid(hasUnsubmittedPulse){
+  return `<div style="padding:0 30px;margin-top:22px;display:flex;justify-content:space-between;">
+    <div onclick="app.goGroup()" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;">
+      <div style="width:52px;height:52px;border-radius:16px;background:#cae7ff;display:flex;align-items:center;justify-content:center;">
+        <svg width="27" height="27" viewBox="0 0 24 24" fill="none"><circle cx="16" cy="9" r="2.8" fill="#06b6d4"></circle><path d="M13.6 18.5c0-2.5 1.9-4.2 4.4-4.2" stroke="#06b6d4" stroke-width="1.8" stroke-linecap="round"></path><circle cx="9" cy="8" r="3.2" stroke="#2f76f4" stroke-width="1.8"></circle><path d="M3.5 19c0-3.3 2.5-5.5 5.5-5.5s5.5 2.2 5.5 5.5" stroke="#2f76f4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      </div>
+      <span style="font-size:12px;font-weight:500;color:#3a4b57;text-align:center;">My Group</span>
     </div>
-    <span style="font-size:11px;font-weight:500;color:#404040;text-align:center;line-height:1.2;">${label}</span>
+    <div onclick="app.openCommunity()" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;">
+      <div style="width:52px;height:52px;border-radius:16px;background:#cae7ff;display:flex;align-items:center;justify-content:center;">
+        <svg width="27" height="27" viewBox="0 0 24 24" fill="none"><path d="M8.5 3.2 12 6.7l3.5-3.5c1.7-1.7 4.4.9 3 2.9L12 14 5.5 6.1c-1.4-2 1.3-4.6 3-2.9Z" fill="#eafaff" stroke="#2f76f4" stroke-width="1.7" stroke-linejoin="round"></path><path d="M12 6.7V21" stroke="#06b6d4" stroke-width="1.8" stroke-linecap="round"></path></svg>
+      </div>
+      <span style="font-size:12px;font-weight:500;color:#3a4b57;text-align:center;">Prayer</span>
+    </div>
+    <div onclick="app.goPulse()" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;">
+      <div style="position:relative;width:52px;height:52px;border-radius:16px;background:#cae7ff;display:flex;align-items:center;justify-content:center;">
+        <svg width="27" height="27" viewBox="0 0 24 24" fill="none"><path d="M3 12.5h3.4l1.9-5 3.4 10 2.4-7 1.3 2H21" stroke="#2f76f4" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path><circle cx="3" cy="12.5" r="1.7" fill="#06b6d4"></circle></svg>
+        ${hasUnsubmittedPulse ? `<div style="position:absolute;top:-5px;right:-5px;min-width:20px;height:20px;padding:0 5px;border-radius:100px;background:#ef4947;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #f4f6f9;">!</div>` : ""}
+      </div>
+      <span style="font-size:12px;font-weight:500;color:#3a4b57;text-align:center;">Pulse Check</span>
+    </div>
+    <div onclick="app.goResources()" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;">
+      <div style="width:52px;height:52px;border-radius:16px;background:#cae7ff;display:flex;align-items:center;justify-content:center;">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5Z" fill="#eafaff"></path><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5Z" stroke="#2f76f4" stroke-width="1.7" stroke-linejoin="round"></path><path d="M11 4v16" stroke="#06b6d4" stroke-width="1.7"></path></svg>
+      </div>
+      <span style="font-size:12px;font-weight:500;color:#3a4b57;text-align:center;">Resources</span>
+    </div>
   </div>`;
 }
 
@@ -19,44 +55,52 @@ function homeScreen(){
   const u = DATA.user, su = DATA.serviceUpdate, v = DATA.verse;
 
   const hero = su && su.enabled
-    ? `<div onclick="app.goEvents()" style="cursor:pointer;position:relative;overflow:hidden;border-radius:20px;background:#1c3249;color:#ffffff;padding:22px;min-height:170px;">
-        <div style="position:absolute;right:-30px;top:-30px;width:150px;height:150px;border-radius:50%;background:rgba(255,255,255,.08);"></div>
-        <div style="font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#60a5fa;">Now studying</div>
-        <div class="serif" style="font-size:30px;font-weight:700;line-height:1.05;letter-spacing:-.5px;margin-top:6px;">${esc(su.theme)}</div>
-        <div style="font-size:14px;font-weight:600;margin-top:12px;">${esc(su.module)}</div>
-        <div style="font-size:13px;color:#d1d1d1;margin-top:3px;line-height:1.4;">${esc(su.note)}</div>
+    ? `<div onclick="app.goEvents()" style="cursor:pointer;position:relative;overflow:hidden;border-radius:16px;background:#2f76f4;color:#ffffff;padding:16px;">
+        <div style="position:absolute;right:-30px;top:-30px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.08);"></div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#c3d0ff;">Now studying</div>
+        <div class="serif" style="font-size:22px;font-weight:700;line-height:1.1;letter-spacing:-.4px;margin-top:4px;">${esc(su.theme)}</div>
+        <div style="font-size:13px;font-weight:600;color:#dbe4ff;margin-top:4px;">${esc(su.module)}</div>
+        ${su.note ? `<div style="font-size:13px;color:#dbe4ff;margin-top:10px;line-height:1.4;">${esc(su.note)}</div>` : ""}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;font-weight:700;color:#ffffff;">View details
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
       </div>`
-    : `<div onclick="app.goEvents()" style="cursor:pointer;position:relative;overflow:hidden;border-radius:20px;background:#ffffff;border:1px solid #d1d1d1;padding:22px;min-height:120px;display:flex;align-items:center;gap:15px;">
-        <div style="width:44px;height:44px;flex-shrink:0;border-radius:13px;background:#f2f2f2;display:flex;align-items:center;justify-content:center;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8d8d8d" stroke-width="1.8"><path d="M4 9v6h4l5 4V5L8 9H4Z"/></svg></div>
+    : `<div onclick="app.goEvents()" style="cursor:pointer;position:relative;overflow:hidden;border-radius:16px;background:#ffffff;border:1px solid #e4ebf2;padding:22px;min-height:120px;display:flex;align-items:center;gap:15px;">
+        <div style="width:44px;height:44px;flex-shrink:0;border-radius:13px;background:#f3f4f8;display:flex;align-items:center;justify-content:center;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#94a3af" stroke-width="1.8"><path d="M4 9v6h4l5 4V5L8 9H4Z"/></svg></div>
         <div>
-          <div style="font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#8d8d8d;">Now studying</div>
-          <div class="serif" style="font-size:19px;font-weight:600;color:#404040;margin-top:5px;line-height:1.25;">No upcoming update</div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#94a3af;">Now studying</div>
+          <div class="serif" style="font-size:19px;font-weight:600;color:#3a4b57;margin-top:5px;line-height:1.25;">No upcoming update</div>
         </div>
       </div>`;
 
-  const verseCard = (v && (v.text || v.ref)) ? `<div style="padding:0 22px;margin-top:16px;"><div style="border-radius:16px;background:#ffffff;padding:16px 18px;box-shadow:0 4px 16px -12px rgba(17,24,32,.25); display:flex; gap:14px; align-items:flex-start;">
-    <div style="width:40px;height:40px;border-radius:12px;background:#eff6ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#2563eb;">
+  const verseCard = (v && (v.text || v.ref)) ? `<div style="padding:0 22px;margin-top:16px;"><div style="border-radius:16px;background:#ffffff;padding:16px 18px;box-shadow:0 4px 16px -12px rgba(5,28,44,.35); display:flex; gap:14px; align-items:flex-start;">
+    <div style="width:38px;height:38px;border-radius:11px;background:#eafaff;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#06b6d4;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10M6 10h10"/></svg>
     </div>
     <div>
-      <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#2563eb;">${esc(v.label||"Verse of the month")}</div>
-      <div class="serif" style="font-size:15px;color:#111820;line-height:1.5;margin-top:5px;">“${esc(v.text)}”</div>
-      <div style="font-size:12px;font-weight:600;color:#2563eb;margin-top:6px;">${esc(v.ref)}</div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#06b6d4;">${esc(v.label||"Verse of the month")}</div>
+      <div class="serif" style="font-size:15px;color:#333d4a;line-height:1.5;margin-top:5px;">“${esc(v.text)}”</div>
+      <div style="font-size:12px;font-weight:600;color:#2f76f4;margin-top:6px;">${esc(v.ref)}</div>
     </div>
   </div></div>` : "";
 
   const ne = DATA.nextEvent || { title: "Life Group Gathering", date: "Upcoming", time: "Upcoming", location: "TBD", summary: "Check back for updates", badge: "UPCOMING" };
-  const nextSection = `<div style="padding:0 22px;margin-top:28px;margin-bottom:20px;">
+  const nextSection = `<div style="padding:0 22px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="serif" style="font-size:20px;font-weight:700;color:#111820;">Next session</div>
-        <div onclick="app.goEvents()" style="cursor:pointer;font-size:14px;font-weight:600;color:#2563eb;">See All</div>
+        <div class="serif" style="font-size:20px;font-weight:700;color:#333d4a;">Next session</div>
+        <div onclick="app.goEvents()" style="cursor:pointer;font-size:14px;font-weight:600;color:#2f76f4;">See All</div>
       </div>
-      <div onclick="app.openNextEvent()" style="cursor:pointer;position:relative;overflow:hidden;border-radius:20px;background:#1c3249;color:#ffffff;padding:22px;">
-        <div style="position:absolute;right:-30px;top:-30px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.06);"></div>
-        <span style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#1c3249;background:#f4d03f;padding:4px 10px;border-radius:100px;">${esc(ne.badge)}</span>
-        <div class="serif" style="font-size:20px;font-weight:600;margin-top:12px;line-height:1.3;">${esc(ne.date)} · ${esc(ne.time)} · ${esc(ne.title)}</div>
-        <div style="font-size:13px;color:#d1d1d1;margin-top:6px;line-height:1.4;">${esc(truncate(ne.summary||"Life Group Gathering", 150))}</div>
-        <div style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;color:#60a5fa;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg> ${esc(ne.location)}</div>
+      <div onclick="app.openNextEvent()" style="cursor:pointer;position:relative;overflow:hidden;border-radius:16px;background:#112378;color:#ffffff;padding:15px 16px;">
+        <div style="position:absolute;right:-30px;top:-30px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.06);"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span class="serif" style="font-size:17px;font-weight:600;">${esc(ne.date)} · ${esc(ne.time)} · ${esc(ne.title)}</span>
+          <span style="flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#112378;background:#7fd0f4;padding:3px 9px;border-radius:100px;">${esc(ne.badge)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:13px;color:#a9c8de;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7fd0f4" stroke-width="2" style="flex-shrink:0;"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
+          <span style="color:#cfe6f5;">${esc(ne.location)}</span>
+        </div>
+        ${ne.summary ? `<div style="font-size:13px;color:#a9c8de;margin-top:10px;line-height:1.4;">${esc(truncate(ne.summary, 150))}</div>` : ""}
       </div>
     </div>`;
 
@@ -64,34 +108,36 @@ function homeScreen(){
 
   const notifUnread = (DATA.notifications || []).filter(n => !n.read).length;
   const notifCountLabel = notifUnread > 9 ? "9+" : String(notifUnread);
-  const notifBell = `<div onclick="app.goNotifications()" style="position:relative;cursor:pointer;width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.12);border:1.5px solid rgba(255,255,255,.3);display:flex;align-items:center;justify-content:center;color:#ffffff;">
-      ${micon("notifications", 22)}
-      ${notifUnread > 0 ? `<span style="position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;padding:0 5px;border-radius:100px;background:#ef4444;color:#ffffff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #111820;">${notifCountLabel}</span>` : ""}
+  const notifBell = `<div onclick="app.goNotifications()" style="position:relative;cursor:pointer;flex-shrink:0;width:36px;height:36px;margin-top:-2px;display:flex;align-items:center;justify-content:center;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3a3a34" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></svg>
+      ${notifUnread > 0 ? `<span style="position:absolute;top:-1px;right:-1px;min-width:18px;height:18px;padding:0 5px;border-radius:10px;background:#ef4947;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #ffffff;">${notifCountLabel}</span>` : ""}
     </div>`;
 
-  return `<div class="screen" style="background:#111820;">
-    <div style="flex-shrink:0;background:#111820;color:#ffffff;padding:calc(16px + env(safe-area-inset-top)) 22px 20px;display:flex;align-items:center;justify-content:space-between;">
-      <div>
-        <div style="font-size:13px;color:#8d8d8d;">${esc(u.greetingDate)}</div>
-        <div style="font-size:23px;font-weight:700;letter-spacing:-.3px;margin-top:2px;">Hi ${esc(u.name)}</div>
-      </div>
-      ${notifBell}
-    </div>
-    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="background:#f2f2f2;padding:20px 0 120px;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+  return `<div class="screen" style="background:#ffffff;">
+    <div id="scrollable-container" class="scr fill" onscroll="app.handleScroll(this)" style="flex:1;min-height:0;background:#f4f6f9;overflow-y:auto;">
       <div id="ptr-indicator">
         <div class="ptr-spinner"></div>
         <span>Pull to refresh...</span>
       </div>
+      <div style="background:#ffffff;color:#2b2b2b;padding:calc(16px + env(safe-area-inset-top)) 22px 16px;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:14px;color:#8f8a80;font-weight:500;">${esc(u.greetingDate)}</div>
+          <div class="serif" style="font-size:26px;font-weight:700;letter-spacing:-.4px;margin-top:2px;">${esc(daypartGreeting())}, ${esc(firstName(u.name))}</div>
+        </div>
+        ${notifBell}
+      </div>
+      <div style="background:#f4f6f9;border-radius:24px 24px 0 0;padding:20px 0 120px;">
       <div style="padding:0 22px;">${hero}</div>
       ${verseCard}
-      <div style="padding:0 22px;margin-top:22px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
-        ${quickAction("goGroup", "My Group", false, "groups")}
-        ${quickAction("openCommunity", "Prayer", false, "volunteer_activism")}
-        ${quickAction("goPulse", "Pulse<br/>Check", hasUnsubmittedPulse, "monitor_heart")}
-        ${quickAction("goResources", "Resources", false, "menu_book")}
+      ${quickActionsGrid(hasUnsubmittedPulse)}
+      <div style="display:flex;align-items:center;gap:10px;padding:0 22px;margin:18px 0;">
+        <div style="flex:1;height:1px;background:#e4ebf2;"></div>
+        <div style="width:4px;height:4px;border-radius:50%;background:#c3cedb;flex-shrink:0;"></div>
+        <div style="flex:1;height:1px;background:#e4ebf2;"></div>
       </div>
       ${renderAnnouncements()}
-      ${nextSection}
+      <div style="margin-top:28px;">${nextSection}</div>
+      </div>
     </div>
   </div>`;
 }
