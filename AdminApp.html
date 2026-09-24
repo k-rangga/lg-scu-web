@@ -34,6 +34,22 @@
     const p = zparts(Date.UTC(y, m - 1, d, 12), "UTC", { weekday: "short", day: "numeric", month: "short" });
     return `${p.weekday}, ${p.day} ${p.month}`;
   }
+  // "14 Sept – 27 Sept"
+  function fmtRange(a, b) {
+    const f = ymd => { const [y, m, d] = ymd.split("-").map(Number); return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", day: "numeric", month: "short" }).format(new Date(Date.UTC(y, m - 1, d, 12))); };
+    return a && b ? `${f(a)} – ${f(b)}` : a ? f(a) : "Not set";
+  }
+  /* Mirrors moduleProblem_ in AdminServer.js so Save is disabled before the
+     server would refuse. */
+  function moduleProblem(d, others, today) {
+    if (!d.theme.trim() || !d.module.trim()) return "";
+    if (!d.start || !d.end) return "";
+    if (d.end < d.start) return "The end date must be on or after the start date.";
+    const clash = others.find(o => o.start && o.end && d.start <= o.end && o.start <= d.end);
+    if (clash) return `Dates overlap with ${clash.module || clash.theme} (${fmtRange(clash.start, clash.end)}).`;
+    if (d.enabled && !(d.start <= today && today <= d.end)) return "Show on Home is only possible while today is within the module's dates.";
+    return "";
+  }
   function fmt12(t) {
     const [h, m] = String(t).split(":").map(Number);
     return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
@@ -102,7 +118,7 @@
       this.state = {
         boot: !!this.token, authed: false, email: a && a.email || "", password: "", showPw: false, loginErr: "", signingIn: false,
         section: "ann", sub: "all", query: "", sort: null, sideOpen: true, drawer: null, toast: "", toastErr: false, pulseId: null,
-        verseDraft: null, moduleDraft: null, data: null, viewAs: "admin", busy: false, ovGroup: "all",
+        verseDraft: null, data: null, viewAs: "admin", busy: false, ovGroup: "all",
         grpOpen: false, grpQuery: "", imgDrag: false, tick: 0,
       };
     }
@@ -163,7 +179,7 @@
     signOut(msg) {
       if (this.token) run("adminLogout", this.token).catch(() => {});
       this.token = ""; lsSet(AUTH, null);
-      this.setState({ authed: false, data: null, password: "", drawer: null, loginErr: msg || "", viewAs: "admin", pulseId: null, section: "ann", sub: "all", busy: false, verseDraft: null, moduleDraft: null });
+      this.setState({ authed: false, data: null, password: "", drawer: null, loginErr: msg || "", viewAs: "admin", pulseId: null, section: "ann", sub: "all", busy: false, verseDraft: null });
     }
 
     changeViewAs(v) {
@@ -264,7 +280,7 @@
         res: [["all", "All"]],
         events: [["all", "All"], ["All groups", "All groups"], ["Mentors only", "Mentors only"], ...groups.map(g => [g, g])],
         pulses: [["all", "All"], ["open", "Open"], ["closed", "Closed"]],
-        verse: [["all", "Verse"]], module: [["all", "Module"]],
+        verse: [["all", "Verse"]], module: [["all", "All"]],
       };
       const childSubs = cur ? [...(ro ? [] : [["questions", `Questions (${cur.items.length})`]]), ["overview", "Overview"], ["notfilled", `Not filled in (${cs.left})`], ["submitted", `Submitted (${cs.done})`]] : [];
       const subtabs = (view.startsWith("p-") ? childSubs : subsBy[view] || []).map(([id, label]) => {
@@ -282,6 +298,7 @@
       const saveItems = (items, msg, patch) => this.mutate("adminSaveQuestions", [cur.id, items], msg, patch);
 
       const cfgBy = {
+        module: { grid: "minmax(240px,2.6fr) 130px minmax(150px,1.2fr) 110px 110px 150px", heads: [["THEME", "theme"], ["MODULE", "module"], ["DATES", "start"], ["PROMPTS", null], ["STATUS", null], ["", null]] },
         ann: { grid: "minmax(240px,2.6fr) 130px minmax(140px,1.2fr) 110px 150px", heads: [["TITLE", "title"], ["TAG", "tag"], ["CREATED", null], ["IMAGE", null], ["", null]] },
         events: { grid: "minmax(220px,2.2fr) 150px minmax(190px,1.3fr) minmax(130px,1fr) 110px 150px", heads: [["EVENT", "title"], ["GROUP", "group"], ["WHEN", "date"], ["LOCATION", "location"], ["STATUS", null], ["", null]] },
         res: { grid: "minmax(240px,2.4fr) minmax(140px,1fr) minmax(180px,1.4fr) 150px", heads: [["TITLE", "title"], ["MODULE GROUP", "group"], ["LINK", null], ["", null]] },
@@ -292,6 +309,12 @@
       };
       const cfg = cfgBy[view] || cfgBy.ann;
       let rows = [];
+      if (view === "module") rows = D0.modules.map(m => ({ key: m.row, o: m, match: [m.theme, m.module, m.note, m.prompts.join(" ")].join(" "), keep: true, hasActions: true, editLabel: "Edit",
+        cells: [P(m.theme, m.note), m.module ? B(m.module, "#cae7ff", "#2f76f4") : M("—"), T(fmtRange(m.start, m.end)),
+          m.prompts.length ? T(`${m.prompts.length} ${m.prompts.length === 1 ? "prompt" : "prompts"}`) : M("None"),
+          m.enabled ? B("On Home", "#e6f4ea", "#15803d") : M("Hidden")],
+        onEdit: stop(() => this.open("mod", m.row, Object.assign({}, m, { prompts: m.prompts.length ? m.prompts.slice() : [""] }), m.theme)),
+        onDelete: stop(() => del(m.theme, "adminDeleteModule", [m.row, m.theme], "Module deleted")) }));
       if (view === "ann") rows = D0.ann.map(a => ({ key: a.row, o: a, match: [a.title, a.tag, a.detail].join(" "), keep: S.sub === "all" || a.tag === S.sub, hasActions: A, editLabel: "Edit",
         cells: [P(a.title, a.detail), a.tag ? B(a.tag, "#cae7ff", "#2f76f4") : M("—"), a.time ? T(a.time) : M("—"), a.imgUrl ? B("Added", "#e6f4ea", "#15803d") : M("None")],
         onEdit: stop(() => this.open("ann", a.row, Object.assign({}, empty.ann, a), a.title)), onDelete: stop(() => del(a.title, "adminDeleteItem", ["ann", a.row, a.title], "Announcement deleted")) }));
@@ -334,11 +357,12 @@
           style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 700, letterSpacing: ".02em", color: "#111820", textAlign: "left", cursor: key ? "pointer" : "default", whiteSpace: "nowrap" } };
       });
       const emptyBy = {
+        module: ["No modules yet", "Add a module to show it on members' Home screen."],
         ann: ["No announcements yet", "Create one to show it on members' Home screen."], events: ["No events", "Add an event so members can plan ahead."], res: ["No resources yet", "Add a link members can open from Resources."],
         pulses: ["No pulse checks yet", ro ? "An admin can create one." : "Create one, then add its questions."], "p-questions": ["No questions yet", "Add questions for this pulse check."],
         "p-notfilled": ["Everyone has filled it in", "All members have submitted this pulse check."], "p-submitted": ["No responses yet", "Members who submit will appear here."],
       };
-      const nouns = { ann: ["announcement", "announcements"], events: ["event", "events"], res: ["resource", "resources"], pulses: ["pulse check", "pulse checks"], "p-questions": ["question", "questions"], "p-notfilled": ["member not filled in", "members not filled in"], "p-submitted": ["response", "responses"] }[view] || ["", ""];
+      const nouns = { module: ["module", "modules"], ann: ["announcement", "announcements"], events: ["event", "events"], res: ["resource", "resources"], pulses: ["pulse check", "pulse checks"], "p-questions": ["question", "questions"], "p-notfilled": ["member not filled in", "members not filled in"], "p-submitted": ["response", "responses"] }[view] || ["", ""];
 
       const strip = cur ? { canEdit: !ro,
         edit: () => this.open("pulse", cur.id, { windowTitle: cur.windowTitle, openDate: cur.openDate || "", openTime: cur.openTime || "08:00", closeDate: cur.closeDate, closeTime: cur.closeTime || "21:00" }),
@@ -352,20 +376,20 @@
         ] } : null;
 
       // Verse / module forms
-      const vd = S.verseDraft || D0.verse, md = S.moduleDraft || D0.module;
+      const vd = S.verseDraft || D0.verse;
       const vDirty = !!S.verseDraft && JSON.stringify(S.verseDraft) !== JSON.stringify(D0.verse);
-      const mDirty = !!S.moduleDraft && JSON.stringify(S.moduleDraft) !== JSON.stringify(D0.module);
       const fs = (key, base, fields) => Object.fromEntries(fields.map(f => [f, e => { const val = e.target.value; this.setState(s => ({ [key]: Object.assign({}, s[key] || s.data[base], { [f]: val }) })); }]));
-      const isV = sec === "verse", dirty = isV ? vDirty : mDirty;
+      const dirty = vDirty;
       const form = { dirty, saveStyle: primaryBtn(!dirty || busy),
-        save: () => { if (!dirty || busy) return; isV ? this.mutate("adminSaveVerse", [vd], "Verse of the month saved", () => ({ verseDraft: null })) : this.mutate("adminSaveModule", [md], "Current module saved", () => ({ moduleDraft: null })); },
-        discard: () => this.setState(isV ? { verseDraft: null } : { moduleDraft: null }) };
-      const mOn = !!md.enabled;
-      const vSet = fs("verseDraft", "verse", ["label", "text", "reference"]), mSet = fs("moduleDraft", "module", ["theme", "module", "note"]);
+        save: () => { if (!dirty || busy) return; this.mutate("adminSaveVerse", [vd], "Verse of the month saved", () => ({ verseDraft: null })); },
+        discard: () => this.setState({ verseDraft: null }) };
+      const vSet = fs("verseDraft", "verse", ["label", "text", "reference"]);
 
       // Drawer
       const Dr = S.drawer, d = Dr ? Dr.draft : {};
       const setD = patch => this.setState(s => ({ drawer: Object.assign({}, s.drawer, { draft: Object.assign({}, s.drawer.draft, patch) }) }));
+      // Prompt edits read the latest list, not the one from this render.
+      const setPrompts = fn => this.setState(s => ({ drawer: Object.assign({}, s.drawer, { draft: Object.assign({}, s.drawer.draft, { prompts: fn(s.drawer.draft.prompts) }) }) }));
       const readImg = f => {
         if (!f || !/^image\//.test(f.type)) return;
         const r = new FileReader();
@@ -380,14 +404,19 @@
         };
         r.readAsDataURL(f);
       };
-      const set = {}; ["title", "tag", "detail", "fileUrl", "group", "text", "windowTitle", "openDate", "openTime", "closeDate", "closeTime", "date", "start", "end", "location", "link"].forEach(f => { set[f] = e => setD({ [f]: e.target.value }); });
+      const set = {}; ["theme", "module", "note", "start", "title", "tag", "detail", "fileUrl", "group", "text", "windowTitle", "openDate", "openTime", "closeDate", "closeTime", "date", "start", "end", "location", "link"].forEach(f => { set[f] = e => setD({ [f]: e.target.value }); });
       const kind = Dr && Dr.kind, editing = Dr && (kind === "pulse" ? Dr.idx != null : Dr.idx >= 0);
+      const today = todayYmd(NOW, tz);
+      const modProblem = kind === "mod" ? moduleProblem(d, D0.modules.filter(m => m.row !== Dr.idx), today) : "";
+      const modInRange = kind === "mod" && !!d.start && !!d.end && d.start <= today && today <= d.end;
       const windowBad = kind === "pulse" && !!(d.openDate && d.closeDate) && `${d.openDate}T${d.openTime || "00:00"}` >= `${d.closeDate}T${d.closeTime || "23:59"}`;
-      const invalid = !Dr || kind === "resp" ? true : kind === "ann" ? !d.title.trim() : kind === "ev" ? !d.title.trim() || !d.date || !d.group : kind === "res" ? !d.title.trim() || !d.fileUrl.trim() || !String(d.group || "").trim() : kind === "q" ? !d.text.trim() : !d.windowTitle.trim() || !d.openDate || !d.closeDate || windowBad;
+      const invalid = !Dr || kind === "resp" ? true : kind === "mod" ? !d.theme.trim() || !d.module.trim() || !d.start || !d.end || !!modProblem : kind === "ann" ? !d.title.trim() : kind === "ev" ? !d.title.trim() || !d.date || !d.group : kind === "res" ? !d.title.trim() || !d.fileUrl.trim() || !String(d.group || "").trim() : kind === "q" ? !d.text.trim() : !d.windowTitle.trim() || !d.openDate || !d.closeDate || windowBad;
       const saveDrawer = () => {
         if (invalid || busy) return;
         const close = () => ({ drawer: null });
-        if (kind === "ann" || kind === "res" || kind === "ev") {
+        if (kind === "mod") {
+          this.mutate("adminSaveModule", [editing ? Dr.idx : -1, Dr.expect || "", Object.assign({}, d, { prompts: d.prompts.filter(x => x.trim()) })], editing ? "Module updated" : "Module added", close);
+        } else if (kind === "ann" || kind === "res" || kind === "ev") {
           this.mutate("adminSaveItem", [kind, editing ? Dr.idx : -1, Dr.expect || "", d], ({ ann: "Announcement ", res: "Resource ", ev: "Event " })[kind] + (editing ? "updated" : "published"), close);
         } else if (kind === "q") {
           const it = { text: d.text.trim().replace(/\|/g, "/"), type: d.type }, items = cur.items.slice();
@@ -399,10 +428,12 @@
           this.mutate("adminSavePulse", [null, d], "Pulse check created", r => ({ drawer: null, pulseId: r.pulseId, sub: "questions", query: "", sort: null }));
         }
       };
-      const titles = { resp: [Dr && Dr.draft.userId ? (memberMap[Dr.draft.userId] || {}).name || "" : "", ""], ann: ["New announcement", "Edit announcement"], res: ["New resource", "Edit resource"], ev: ["New event", "Edit event"], q: ["New question", "Edit question"], pulse: ["New pulse check", "Pulse check settings"] };
+      const titles = { mod: ["New module", "Edit module"], resp: [Dr && Dr.draft.userId ? (memberMap[Dr.draft.userId] || {}).name || "" : "", ""], ann: ["New announcement", "Edit announcement"], res: ["New resource", "Edit resource"], ev: ["New event", "Edit event"], q: ["New question", "Edit question"], pulse: ["New pulse check", "Pulse check settings"] };
       const drawer = { title: Dr ? titles[kind][editing ? 1 : 0] : "", close: () => this.setState({ drawer: null, grpOpen: false }),
-        saveLabel: busy ? "Saving…" : editing ? "Save changes" : kind === "q" ? "Add question" : kind === "pulse" ? "Create" : "Publish", saveStyle: primaryBtn(invalid || busy) };
+        saveLabel: busy ? "Saving…" : editing ? "Save changes" : kind === "q" ? "Add question" : kind === "mod" ? "Add module" : kind === "pulse" ? "Create" : "Publish", saveStyle: primaryBtn(invalid || busy) };
+      const nextModule = "Module " + (D0.modules.reduce((n, m) => Math.max(n, parseInt((m.module.match(/\d+/) || [0])[0], 10) || 0), 0) + 1);
       const newBy = {
+        module: ["New module", () => this.open("mod", -1, { enabled: false, theme: "", module: nextModule, start: "", end: "", note: "", prompts: [""] })],
         ann: ["New announcement", () => this.open("ann", -1, Object.assign({}, empty.ann, { tag: S.sub !== "all" ? S.sub : "" }))],
         res: ["New resource", () => this.open("res", -1, Object.assign({}, empty.res))],
         events: ["New event", () => this.open("ev", -1, Object.assign({}, empty.ev, { group: S.sub !== "all" ? S.sub : "" }))],
@@ -448,10 +479,11 @@
         return { items, hint: d.group === "All groups" ? "Every member will see the event." : d.group === "Mentors only" ? "Only mentors will see the event." : "Only members of this group will see the event." };
       })();
       const titleBy = { ann: "Announcements", events: "Events", res: "Resources", pulse: "Pulse Check", verse: "Verse of the Month", module: "Current Module" };
+      const mOn = kind === "mod" && !!d.enabled;
       const swTrack = { width: 46, height: 28, borderRadius: 100, background: mOn ? "#2f76f4" : "#d5dde7", position: "relative", flexShrink: 0 };
       const swKnob = { position: "absolute", top: 3, left: mOn ? 21 : 3, width: 22, height: 22, borderRadius: "50%", background: "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,.2)", transition: "left .15s" };
       const roleLabel = senior ? "Leader · All groups" : leader ? "Leader · " + leader : "Admin";
-      const isTable = sec !== "verse" && sec !== "module" && view !== "p-overview";
+      const isTable = sec !== "verse" && view !== "p-overview";
       const showNew = (!ro || sec !== "pulse") && !!newBy[view];
       const page = { title: cur ? cur.windowTitle : titleBy[sec], crumb: cur ? "Pulse Check" : "", searchPh: view === "p-notfilled" || view === "p-submitted" ? "Search members" : `Search ${nouns[1]}` };
       const qNote = kind === "q" && cur && cur.responseCount > 0;
@@ -607,25 +639,12 @@
                 </div>
               </div>`}
 
-            ${(sec === "verse" || sec === "module") && html`
+            ${sec === "verse" && html`
               <div style="display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start;padding-top:28px;">
                 <div style="flex:1 1 420px;max-width:620px;display:flex;flex-direction:column;gap:20px;">
-                  ${isV ? html`
-                    <${Field} label="Label"><input value=${vd.label} onInput=${vSet.label} placeholder="Verse of the month" style=${INPUT} /><//>
-                    <${Field} label="Verse"><textarea value=${vd.text} onInput=${vSet.text} rows="5" placeholder="Paste the verse text, without quotation marks" style=${AREA}></textarea><//>
-                    <${Field} label="Reference"><input value=${vd.reference} onInput=${vSet.reference} placeholder="e.g. Ephesians 2:10" style=${INPUT} /><//>
-                  ` : html`
-                    <button onClick=${() => this.setState({ moduleDraft: Object.assign({}, md, { enabled: !mOn }) })} style="display:flex;align-items:center;gap:14px;text-align:left;padding:14px 16px;border-radius:10px;border:1.5px solid #e4ebf2;">
-                      <div style="flex:1;display:flex;flex-direction:column;gap:2px;">
-                        <div style="font-size:15px;font-weight:600;color:#333d4a;">Show on Home</div>
-                        <div style="font-size:13px;color:#8b98ac;">Displays the "Now studying" card at the top of members' Home screen.</div>
-                      </div>
-                      <div style=${swTrack}><div style=${swKnob}></div></div>
-                    </button>
-                    <${Field} label="Theme"><input value=${md.theme} onInput=${mSet.theme} placeholder="e.g. Identity in Christ" style=${INPUT} /><//>
-                    <${Field} label="Module"><input value=${md.module} onInput=${mSet.module} placeholder="e.g. Module 3 · Week 2" style=${INPUT} /><//>
-                    <${Field} label="Note"><textarea value=${md.note} onInput=${mSet.note} rows="3" placeholder="Optional — a short line for this week" style=${AREA}></textarea><//>
-                  `}
+                  <${Field} label="Label"><input value=${vd.label} onInput=${vSet.label} placeholder="Verse of the month" style=${INPUT} /><//>
+                  <${Field} label="Verse"><textarea value=${vd.text} onInput=${vSet.text} rows="5" placeholder="Paste the verse text, without quotation marks" style=${AREA}></textarea><//>
+                  <${Field} label="Reference"><input value=${vd.reference} onInput=${vSet.reference} placeholder="e.g. Ephesians 2:10" style=${INPUT} /><//>
                   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px;">
                     <button onClick=${form.save} disabled=${!form.dirty || busy} style=${form.saveStyle}>${busy && form.dirty ? "Saving…" : "Save changes"}</button>
                     ${form.dirty && html`
@@ -636,26 +655,16 @@
                 <div style="flex:0 1 380px;min-width:280px;display:flex;flex-direction:column;gap:12px;">
                   <div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8b98ac;">Preview on Home</div>
                   <div style="background:#f4f6f9;border-radius:16px;padding:20px;">
-                    ${isV ? html`
-                      <div style="border-radius:16px;background:#ffffff;padding:16px 18px;box-shadow:0 4px 16px -12px rgba(5,28,44,.4);display:flex;gap:14px;align-items:flex-start;">
-                        <div style="width:38px;height:38px;border-radius:11px;background:#eafaff;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#06b6d4;">
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path><path d="M6 6h10M6 10h10"></path></svg>
-                        </div>
-                        <div style="min-width:0;">
-                          <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#06b6d4;">${vd.label || "Verse of the month"}</div>
-                          <div style="font-size:15px;color:#333d4a;line-height:1.5;margin-top:5px;text-wrap:pretty;">${vd.text ? `“${vd.text}”` : "Verse text"}</div>
-                          <div style="font-size:12px;font-weight:600;color:#2f76f4;margin-top:6px;">${vd.reference || "Reference"}</div>
-                        </div>
-                      </div>` : mOn ? html`
-                      <div style="position:relative;overflow:hidden;border-radius:16px;background:#2f76f4;color:#ffffff;padding:16px;">
-                        <div style="position:absolute;right:-30px;top:-30px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.08);"></div>
-                        <div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#c3d0ff;">Now studying</div>
-                        <div style="font-size:22px;font-weight:700;line-height:1.1;letter-spacing:-.4px;margin-top:4px;">${md.theme || "Theme"}</div>
-                        <div style="font-size:13px;font-weight:600;color:#dbe4ff;margin-top:4px;">${md.module || "Module"}</div>
-                        ${md.note && html`<div style="font-size:13px;color:#dbe4ff;margin-top:10px;line-height:1.4;">${md.note}</div>`}
-                        <div style="font-size:13px;font-weight:700;margin-top:12px;">View details ›</div>
-                      </div>` : html`
-                      <div style="padding:28px 16px;text-align:center;font-size:14px;color:#8b98ac;border:1.5px dashed #d5dde7;border-radius:16px;">Hidden — members won't see this card.</div>`}
+                    <div style="border-radius:16px;background:#ffffff;padding:16px 18px;box-shadow:0 4px 16px -12px rgba(5,28,44,.4);display:flex;gap:14px;align-items:flex-start;">
+                      <div style="width:38px;height:38px;border-radius:11px;background:#eafaff;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#06b6d4;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path><path d="M6 6h10M6 10h10"></path></svg>
+                      </div>
+                      <div style="min-width:0;">
+                        <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#06b6d4;">${vd.label || "Verse of the month"}</div>
+                        <div style="font-size:15px;color:#333d4a;line-height:1.5;margin-top:5px;text-wrap:pretty;">${vd.text ? `“${vd.text}”` : "Verse text"}</div>
+                        <div style="font-size:12px;font-weight:600;color:#2f76f4;margin-top:6px;">${vd.reference || "Reference"}</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>`}
@@ -673,6 +682,41 @@
             </button>
           </div>
           <div style="flex:1;overflow-y:auto;overflow-x:hidden;padding:24px;display:flex;flex-direction:column;gap:20px;">
+            ${kind === "mod" && html`
+              <button onClick=${() => { if (d.enabled || modInRange) setD({ enabled: !d.enabled }); }} disabled=${!d.enabled && !modInRange} style=${{ display: "flex", alignItems: "center", gap: 14, textAlign: "left", padding: "14px 16px", borderRadius: 10, border: "1.5px solid #e4ebf2", opacity: !d.enabled && !modInRange ? .6 : 1 }}>
+                <div style="flex:1;display:flex;flex-direction:column;gap:2px;">
+                  <div style="font-size:15px;font-weight:600;color:#333d4a;">Show on Home</div>
+                  <div style="font-size:13px;color:#8b98ac;">${!d.enabled && !modInRange ? "Available while today is within this module's dates." : "One module shows at a time — turning this on hides the others."}</div>
+                </div>
+                <div style=${swTrack}><div style=${swKnob}></div></div>
+              </button>
+              <${Field} label="Theme"><input value=${d.theme} onInput=${set.theme} placeholder="e.g. More Than Existing" style=${INPUT} /><//>
+              <${Field} label="Module"><input value=${d.module} onInput=${set.module} placeholder="e.g. Module 7" style=${INPUT} /><//>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <${Field} label="Starts" style=${{ flex: "1 1 140px" }}><input type="date" value=${d.start} onInput=${set.start} style=${INPUT} /><//>
+                <${Field} label="Ends" style=${{ flex: "1 1 140px" }}><input type="date" value=${d.end} onInput=${e => setD({ end: e.target.value })} style=${INPUT} /><//>
+              </div>
+              ${modProblem && html`<div style="font-size:13px;color:#d94545;margin-top:-8px;">${modProblem}</div>`}
+              <${Field} label="Note"><textarea value=${d.note} onInput=${set.note} rows="3" placeholder="Optional — e.g. Remember to read the study materials" style=${AREA}></textarea><//>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                  <div style="font-size:14px;font-weight:600;">Reflection prompts</div>
+                  <div style="font-size:13px;color:#8b98ac;">Members answer these in order.</div>
+                </div>
+                ${d.prompts.map((pr, i) => html`<div key=${i} style="display:flex;gap:12px;align-items:flex-start;">
+                  <div style="width:18px;padding-top:13px;font-size:14px;font-weight:600;color:#8b98ac;flex-shrink:0;">${i + 1}</div>
+                  <textarea value=${pr} onInput=${e => { const v = e.target.value; setPrompts(ps => ps.map((x, j) => j === i ? v : x)); }} rows="2" placeholder="e.g. Apakah kamu sudah memiliki hubungan yang otentik dengan Tuhan?" style=${AREA + "flex:1;min-width:0;"}></textarea>
+                  <button class="hov-soft" onClick=${() => setPrompts(ps => ps.length > 1 ? ps.filter((_, j) => j !== i) : [""])} aria-label=${"Remove prompt " + (i + 1)} style="width:32px;height:32px;margin-top:6px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b98ac" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+                  </button>
+                </div>`)}
+                <button onClick=${() => setPrompts(ps => ps.concat([""]))} style="align-self:flex-start;margin-left:30px;height:36px;padding:0 14px;border-radius:100px;background:#f4f6f9;color:#2f76f4;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2f76f4" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Add prompt
+                </button>
+              </div>
+            `}
+
             ${kind === "ann" && html`
               <${Field} label="Title"><input value=${d.title} onInput=${set.title} placeholder="e.g. Combined gathering this Saturday" style=${INPUT} /><//>
               <${Field} label="Tag">

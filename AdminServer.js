@@ -387,7 +387,7 @@ function adminData_(ctx) {
   const groups = groupsRaw.map(g => ({ id: id_(g.groupId), name: str_(g.name) || id_(g.groupId) }));
   const groupName = gid => { const g = groups.find(x => x.id === gid); return g ? g.name : gid; };
 
-  const su = readSheetAsMap('ServiceUpdate')[0] || {};
+  const modules = readModules_();
   const vs = readSheetAsMap('Verse')[0] || {};
 
   const ann = readRows_('Announcements').filter(a => str_(a.title)).map(a => {
@@ -446,7 +446,7 @@ function adminData_(ctx) {
     tz: tz,
     serverNow: Date.now(),
     groups: groups,
-    module: { enabled: isTruthyCell_(su.enabled), theme: str_(su.theme), module: str_(su.module), note: str_(su.note) },
+    modules: modules,
     verse: { label: str_(vs.label), text: str_(vs.text), reference: str_(vs.reference) },
     ann: ann, events: events, res: res, pulses: pulses, members: members
   };
@@ -459,12 +459,72 @@ function firstDataRow_(sheet) {
   return 2;
 }
 
-function adminSaveModule(token, viewAs, m) {
+/* ---- Modules --------------------------------------------------------------
+   ServiceUpdate tab: enabled | theme | module | note | date_start | date_end |
+   prompt ("|"-separated reflection prompts). One row is ever enabled — the
+   one on members' Home — and only while today is within its dates. Date
+   ranges may not overlap. Date cells are only rewritten when they change, so
+   the sheet's chained formulas (=F2+1) survive edits to other fields.
+   -------------------------------------------------------------------------- */
+
+function readModules_() {
+  return readRows_('ServiceUpdate').filter(r => str_(r.theme).trim() || str_(r.module).trim()).map(r => ({
+    row: r.__row,
+    enabled: isTruthyCell_(r.enabled),
+    theme: str_(r.theme).trim(),
+    module: str_(r.module).trim(),
+    note: str_(r.note).trim(),
+    start: ymd_(asDate_(r.date_start)),
+    end: ymd_(asDate_(r.date_end)),
+    prompts: String(r.prompt || '').split('|').map(x => x.trim()).filter(x => x)
+  }));
+}
+
+/* Shared with the client's live validation; returns an error message or ''. */
+function moduleProblem_(d, others, today) {
+  if (!str_(d.theme).trim() || !str_(d.module).trim()) return 'Theme and module are required.';
+  if (!d.start || !d.end) return 'Start and end dates are required.';
+  if (d.end < d.start) return 'The end date must be on or after the start date.';
+  const clash = others.find(o => o.start && o.end && d.start <= o.end && o.start <= d.end);
+  if (clash) return 'Dates overlap with ' + (clash.module || clash.theme) + ' (' + clash.start + ' – ' + clash.end + ').';
+  if (d.enabled && !(d.start <= today && today <= d.end)) return 'Show on Home is only possible while today is within the module\'s dates.';
+  return '';
+}
+
+function adminSaveModule(token, viewAs, row, expectTheme, d) {
   return adminCall_(token, viewAs, 'content', () => {
-    const sheet = sheetWithHeaders_('ServiceUpdate', ['enabled', 'theme', 'module', 'note']);
-    writeByHeader_(sheet, firstDataRow_(sheet), {
-      enabled: !!m.enabled, theme: str_(m.theme).trim(), module: str_(m.module).trim(), note: str_(m.note).trim()
-    });
+    const sheet = sheetWithHeaders_('ServiceUpdate', ['enabled', 'theme', 'module', 'note', 'date_start', 'date_end', 'prompt']);
+    const editing = row !== null && row !== undefined && row !== -1;
+    const all = readModules_();
+    const current = editing ? all.find(m => m.row === Number(row)) : null;
+    if (editing && (!current || current.theme !== String(expectTheme))) throw new Error('This module changed in the sheet. Reload and try again.');
+    const clean = {
+      enabled: !!d.enabled, theme: str_(d.theme).trim(), module: str_(d.module).trim(), note: str_(d.note).trim(),
+      start: str_(d.start), end: str_(d.end)
+    };
+    const problem = moduleProblem_(clean, all.filter(m => !current || m.row !== current.row), ymd_(new Date()));
+    if (problem) throw new Error(problem);
+
+    const values = {
+      enabled: clean.enabled, theme: clean.theme, module: clean.module, note: clean.note,
+      prompt: (d.prompts || []).map(x => str_(x).replace(/\|/g, '/').trim()).filter(x => x).join('|')
+    };
+    if (!current || current.start !== clean.start) values.date_start = parseLocal_(clean.start, '00:00');
+    if (!current || current.end !== clean.end) values.date_end = parseLocal_(clean.end, '00:00');
+
+    const target = current ? current.row : sheet.getLastRow() + 1;
+    writeByHeader_(sheet, target, values);
+    // Only one module is ever live on Home.
+    if (clean.enabled) all.forEach(m => { if (m.row !== target && m.enabled) writeByHeader_(sheet, m.row, { enabled: false }); });
+  });
+}
+
+function adminDeleteModule(token, viewAs, row, expectTheme) {
+  return adminCall_(token, viewAs, 'content', () => {
+    const sheet = ss_().getSheetByName('ServiceUpdate');
+    const current = readModules_().find(m => m.row === Number(row));
+    if (!sheet || !current || current.theme !== String(expectTheme)) throw new Error('This module changed in the sheet. Reload and try again.');
+    sheet.deleteRow(current.row);
   });
 }
 
