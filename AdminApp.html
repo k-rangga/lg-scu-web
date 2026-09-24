@@ -6,7 +6,9 @@
    difference is that data comes from and goes to AdminServer.js instead of
    localStorage, and pulse answers are the real ones.
    ========================================================================== */
+window.__appScriptRan = true;
 (function () {
+  if (typeof htmPreact === "undefined") return window.__bootFail("The interface library did not load.");
   const { html, render, Component } = htmPreact;
   const AUTH = "scu-admin-console-auth";
 
@@ -90,6 +92,9 @@
     q: { text: "", type: "scale" },
   };
   const SC = ["#d94545", "#f0a8a8", "#dfe5ec", "#8fbcff", "#2f76f4"], SCT = ["#ffffff", "#7a1f1f", "#333d4a", "#123a7a", "#ffffff"], SCL = ["1 · Not at all", "2", "3 · Somewhat", "4", "5 · Very"];
+  // Built from parts: Apps Script strips slash-star comments when serving,
+  // and would treat a literal image-slash-star as the start of one.
+  const IMG_ACCEPT = "image/" + "*";
   const INPUT = "height:46px;border:1.5px solid #e4ebf2;border-radius:10px;padding:0 14px;font-size:15px;color:#111820;background:#ffffff;";
   const AREA = "border:1.5px solid #e4ebf2;border-radius:10px;padding:12px 14px;font-size:15px;line-height:1.5;color:#111820;resize:vertical;";
 
@@ -730,7 +735,7 @@
                 ${d.imgUrl ? html`<div style="display:flex;flex-direction:column;gap:10px;">
                   <div style=${{ width: 200, aspectRatio: "16/10", borderRadius: 10, background: `#e6edf4 url("${String(d.imgUrl).replace(/"/g, "%22")}") center/cover no-repeat` }}></div>
                   <div style="display:flex;gap:8px;">
-                    <label style="height:36px;padding:0 14px;border-radius:100px;background:#f4f6f9;color:#2f76f4;font-size:13px;font-weight:600;display:flex;align-items:center;cursor:pointer;">Replace<input type="file" accept="image/*" onChange=${e => { readImg(e.target.files && e.target.files[0]); e.target.value = ""; }} style="display:none;" /></label>
+                    <label style="height:36px;padding:0 14px;border-radius:100px;background:#f4f6f9;color:#2f76f4;font-size:13px;font-weight:600;display:flex;align-items:center;cursor:pointer;">Replace<input type="file" accept=${IMG_ACCEPT} onChange=${e => { readImg(e.target.files && e.target.files[0]); e.target.value = ""; }} style="display:none;" /></label>
                     <button onClick=${() => setD({ imgUrl: "" })} style="height:36px;padding:0 14px;border-radius:100px;background:#f4f6f9;color:#5b6b86;font-size:13px;font-weight:600;">Remove</button>
                   </div>
                 </div>` : html`
@@ -739,7 +744,7 @@
                   style=${{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, minHeight: 140, padding: 20, textAlign: "center", borderRadius: 12, cursor: "pointer", border: "1.5px dashed " + (S.imgDrag ? "#2f76f4" : "#c9d5e2"), background: S.imgDrag ? "#eef5ff" : "#f9fbfd", boxSizing: "border-box" }}>
                   <div style="font-size:15px;font-weight:600;color:#111820;">Drag & drop an image</div>
                   <div style="font-size:13px;color:#8b98ac;">or <span style="color:#2f76f4;font-weight:600;">browse files</span> · 16:10 works best</div>
-                  <input type="file" accept="image/*" onChange=${e => { readImg(e.target.files && e.target.files[0]); e.target.value = ""; }} style="display:none;" />
+                  <input type="file" accept=${IMG_ACCEPT} onChange=${e => { readImg(e.target.files && e.target.files[0]); e.target.value = ""; }} style="display:none;" />
                 </label>`}
               <//>
               <${Field} label="Details"><textarea value=${d.detail} onInput=${set.detail} rows="7" placeholder="Full text shown when members open the announcement" style=${AREA}></textarea><//>
@@ -852,6 +857,7 @@
 
   const root = document.getElementById("root");
   root.innerHTML = "";
-  render(html`<${App} />`, root);
+  try { render(html`<${App} />`, root); window.__appStarted = true; }
+  catch (err) { window.__appError = String(err && err.stack || err); window.__bootFail(window.__appError); }
 })();
 </script>

@@ -26,7 +26,19 @@ button:disabled{cursor:not-allowed;}
 </head>
 <body>
 <div id="root"><div class="boot">Loading…</div></div>
-<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.umd.js"></script>
+<script>
+/* If anything stops the app from starting, say so instead of leaving "Loading…" up. */
+window.__bootFail = function (msg) {
+  var r = document.getElementById("root");
+  if (r && !window.__appStarted) r.innerHTML = '<div class="boot" style="flex-direction:column;gap:8px;padding:24px;text-align:center;"><div style="color:#d94545;font-weight:600;">The console couldn\'t start.</div><div style="font-size:13px;max-width:560px;word-break:break-word;"></div></div>',
+    r.querySelector("div div:last-child").textContent = String(msg);
+};
+setTimeout(function () {
+  if (!window.__appStarted) window.__bootFail("Startup stalled — library: " + (typeof htmPreact) + ", app script ran: " + !!window.__appScriptRan + ", ready: " + document.readyState + (window.__appError ? ", error: " + window.__appError : ""));
+}, 6000);
+window.addEventListener("error", function (e) { window.__bootFail((e.message || "Script error") + (e.filename ? " (" + e.filename.split("/").pop() + ":" + e.lineno + ")" : "")); });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.umd.js" onerror="window.__bootFail('Could not load the interface library from cdn.jsdelivr.net.')"></script>
 <?!= include('AdminApp'); ?>
 </body>
 </html>
