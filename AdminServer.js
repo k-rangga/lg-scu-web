@@ -5,13 +5,15 @@
    saved here shows up in the app on the next refresh.
 
    Roles (from the Users tab)
-     scope = admin       — everything, including Pulse Check setup, and every
-                           member's pulse answers with their name.
-     scope = leader_all  — edits Home content; Pulse Check read-only, all groups.
-     role  = Mentor      — edits Home content; Pulse Check read-only and limited
-                           to their own group's members.
-   Anyone else (or scope = none) cannot sign in. Run setupAdminConsole() once
-   from the editor to add the scope column and make the script owner an admin.
+     role = Mentor, scope = admin  — admin: everything, including creating and
+                                     editing pulse checks; sees every member's
+                                     pulse answers with their name.
+     role = Mentor, scope empty    — mentor: reads and writes everything, but
+                                     Pulse Check is read-only and limited to
+                                     their own group's members.
+   Everyone else (members, or any other scope value) cannot sign in. Run
+   setupAdminConsole() once from the editor to add the scope column and make
+   the script owner an admin.
 
    Every call re-derives the caller from their session token, and pulse data
    is scoped here before it leaves the server — a mentor never receives
@@ -20,7 +22,7 @@
 
 const ADMIN_SESSION_PREFIX = 'admsess_';
 const ADMIN_UPLOAD_FOLDER_ID = '10Z7VWwJt6KuCL15CZ68ETsgex4cnls5R';
-const ADMIN_ROLES = ['admin', 'leader_all', 'leader_group'];
+const ADMIN_ROLES = ['admin', 'leader_group'];
 const EVENT_ALL = 'All groups';
 const EVENT_MENTORS = 'Mentors only';
 
@@ -266,14 +268,6 @@ function parseAnswers_(raw, items) {
 
 /* ---- Identity & sessions --------------------------------------------------- */
 
-function normalizeRole_(v) {
-  const s = String(v || '').trim().toLowerCase().replace(/[\s\-—·]+/g, '_');
-  if (s === 'admin') return 'admin';
-  if (s === 'leader_all' || s === 'leader_all_groups') return 'leader_all';
-  if (s === 'mentor' || s === 'leader_group' || s === 'group_leader') return 'leader_group';
-  return '';
-}
-
 function findGroup_(groups, key) {
   const k = String(key || '').trim().toLowerCase();
   if (!k) return null;
@@ -287,11 +281,12 @@ function adminResolveUser_(email) {
   if (!u || String(u.status || '').toUpperCase() === 'INACTIVE') return null;
   const groups = readSheetAsMap('Groups');
 
-  // scope (a Users column) grants admin / leader_all; a filled-in scope that
-  // isn't one of those (e.g. "none") shuts the console even to a mentor.
-  const scope = String(u.scope || '').trim();
-  let role = normalizeRole_(scope);
-  if (!role && !scope && String(u.role || '').trim().toLowerCase() === 'mentor') role = 'leader_group';
+  // Only mentors get in. scope = admin makes a mentor an admin; an empty
+  // scope keeps them a mentor (internally "leader_group"); anything else
+  // shuts the console to them.
+  if (String(u.role || '').trim().toLowerCase() !== 'mentor') return null;
+  const scope = String(u.scope || '').trim().toLowerCase();
+  const role = scope === 'admin' ? 'admin' : scope === '' ? 'leader_group' : '';
   const groupKey = u.groupId;
   if (!role) return null;
   const g = findGroup_(groups, groupKey);
@@ -303,13 +298,12 @@ function adminResolveUser_(email) {
     name: name,
     initials: getInitials(name),
     role: role,
-    realRole: role,
     groupId: g ? id_(g.groupId) : '',
     groupName: g ? str_(g.name) : ''
   };
 }
 
-function adminCtx_(token, viewAs) {
+function adminCtx_(token) {
   let session = null;
   try {
     const raw = token && PropertiesService.getScriptProperties().getProperty(ADMIN_SESSION_PREFIX + String(token));
@@ -319,16 +313,6 @@ function adminCtx_(token, viewAs) {
   if (!ctx) {
     if (token) PropertiesService.getScriptProperties().deleteProperty(ADMIN_SESSION_PREFIX + String(token));
     throw new Error('SESSION_EXPIRED');
-  }
-  // "Viewing as" is an admin-only preview; the server scopes to it as well,
-  // so the preview shows exactly what that role would receive.
-  if (ctx.realRole === 'admin' && viewAs && viewAs !== 'admin') {
-    if (viewAs === 'leader_all') {
-      ctx.role = 'leader_all';
-    } else {
-      const g = findGroup_(readSheetAsMap('Groups'), viewAs);
-      if (g) { ctx.role = 'leader_group'; ctx.groupId = id_(g.groupId); ctx.groupName = str_(g.name); }
-    }
   }
   return ctx;
 }
@@ -347,8 +331,8 @@ function adminLogin(email, password) {
   return { success: true, token: token, data: adminData_(ctx) };
 }
 
-function adminResume(token, viewAs) {
-  return adminCall_(token, viewAs, null, ctx => ({ data: adminData_(ctx) }));
+function adminResume(token) {
+  return adminCall_(token, null, ctx => ({ data: adminData_(ctx) }));
 }
 
 function adminLogout(token) {
@@ -359,10 +343,10 @@ function adminLogout(token) {
 /* Wraps every API call: resolves the caller, checks the permission, takes the
    script lock for writes, and reports errors as data rather than throwing
    (google.script.run turns a throw into an opaque message). */
-function adminCall_(token, viewAs, need, fn) {
+function adminCall_(token, need, fn) {
   let lock = null;
   try {
-    const ctx = adminCtx_(token, viewAs);
+    const ctx = adminCtx_(token);
     if (need === 'content' && ADMIN_ROLES.indexOf(ctx.role) === -1) throw new Error('Not allowed.');
     if (need === 'pulse' && ctx.role !== 'admin') throw new Error('Only admins can change pulse checks.');
     if (need) { lock = LockService.getScriptLock(); lock.waitLock(20000); }
@@ -442,7 +426,7 @@ function adminData_(ctx) {
   }).sort((a, b) => b.openMs - a.openMs);
 
   return {
-    me: { email: ctx.email, name: ctx.name, initials: ctx.initials, role: ctx.role, realRole: ctx.realRole, groupId: ctx.groupId, groupName: ctx.groupName },
+    me: { email: ctx.email, name: ctx.name, initials: ctx.initials, role: ctx.role, groupId: ctx.groupId, groupName: ctx.groupName },
     tz: tz,
     serverNow: Date.now(),
     groups: groups,
@@ -491,8 +475,8 @@ function moduleProblem_(d, others, today) {
   return '';
 }
 
-function adminSaveModule(token, viewAs, row, expectTheme, d) {
-  return adminCall_(token, viewAs, 'content', () => {
+function adminSaveModule(token, row, expectTheme, d) {
+  return adminCall_(token, 'content', () => {
     const sheet = sheetWithHeaders_('ServiceUpdate', ['enabled', 'theme', 'module', 'note', 'date_start', 'date_end', 'prompt']);
     const editing = row !== null && row !== undefined && row !== -1;
     const all = readModules_();
@@ -519,8 +503,8 @@ function adminSaveModule(token, viewAs, row, expectTheme, d) {
   });
 }
 
-function adminDeleteModule(token, viewAs, row, expectTheme) {
-  return adminCall_(token, viewAs, 'content', () => {
+function adminDeleteModule(token, row, expectTheme) {
+  return adminCall_(token, 'content', () => {
     const sheet = ss_().getSheetByName('ServiceUpdate');
     const current = readModules_().find(m => m.row === Number(row));
     if (!sheet || !current || current.theme !== String(expectTheme)) throw new Error('This module changed in the sheet. Reload and try again.');
@@ -528,8 +512,8 @@ function adminDeleteModule(token, viewAs, row, expectTheme) {
   });
 }
 
-function adminSaveVerse(token, viewAs, v) {
-  return adminCall_(token, viewAs, 'content', () => {
+function adminSaveVerse(token, v) {
+  return adminCall_(token, 'content', () => {
     const sheet = sheetWithHeaders_('Verse', ['label', 'text', 'reference']);
     writeByHeader_(sheet, firstDataRow_(sheet), {
       label: str_(v.label).trim(), text: str_(v.text).trim(), reference: str_(v.reference).trim()
@@ -587,8 +571,8 @@ function eventGroupCells_(label) {
   return { gid: id_(g.groupId), mentorOnly: false };
 }
 
-function adminSaveItem(token, viewAs, kind, row, expectTitle, d) {
-  return adminCall_(token, viewAs, 'content', () => {
+function adminSaveItem(token, kind, row, expectTitle, d) {
+  return adminCall_(token, 'content', () => {
     const cfg = ADMIN_KINDS[kind];
     if (!cfg) throw new Error('Unknown item type.');
     const sheet = sheetWithHeaders_(cfg.sheet, cfg.headers);
@@ -629,8 +613,8 @@ function adminSaveItem(token, viewAs, kind, row, expectTitle, d) {
   });
 }
 
-function adminDeleteItem(token, viewAs, kind, row, expectTitle) {
-  return adminCall_(token, viewAs, 'content', () => {
+function adminDeleteItem(token, kind, row, expectTitle) {
+  return adminCall_(token, 'content', () => {
     const cfg = ADMIN_KINDS[kind];
     if (!cfg) throw new Error('Unknown item type.');
     const sheet = ss_().getSheetByName(cfg.sheet);
@@ -645,9 +629,9 @@ function pulseRowById_(sheet, id) {
   return p.row;
 }
 
-function adminSavePulse(token, viewAs, id, d) {
+function adminSavePulse(token, id, d) {
   let newId = null;
-  return adminCall_(token, viewAs, 'pulse', () => {
+  return adminCall_(token, 'pulse', () => {
     const title = str_(d.windowTitle).trim();
     const openAt = parseLocal_(d.openDate, d.openTime || '00:00');
     const closeAt = parseLocal_(d.closeDate, d.closeTime || '23:59');
@@ -669,8 +653,8 @@ function adminSavePulse(token, viewAs, id, d) {
   });
 }
 
-function adminSaveQuestions(token, viewAs, id, items) {
-  return adminCall_(token, viewAs, 'pulse', () => {
+function adminSaveQuestions(token, id, items) {
+  return adminCall_(token, 'pulse', () => {
     const sheet = sheetWithHeaders_('Pulse', ['pulse_id', 'windowTitle', 'open date', 'closes date', 'questions', 'open_questions']);
     const clean = (items || []).map(it => ({ text: str_(it.text).replace(/\|/g, '/').trim(), type: it.type === 'open' ? 'open' : 'scale' }))
       .filter(it => it.text);
@@ -682,8 +666,8 @@ function adminSaveQuestions(token, viewAs, id, items) {
 }
 
 /* Removes the pulse's row only; its responses stay in PulseResponses. */
-function adminDeletePulse(token, viewAs, id) {
-  return adminCall_(token, viewAs, 'pulse', () => {
+function adminDeletePulse(token, id) {
+  return adminCall_(token, 'pulse', () => {
     const sheet = ss_().getSheetByName('Pulse');
     if (!sheet) throw new Error('Sheet not found.');
     sheet.deleteRow(pulseRowById_(sheet, id));

@@ -123,14 +123,14 @@ window.__appScriptRan = true;
       this.state = {
         boot: !!this.token, authed: false, email: a && a.email || "", password: "", showPw: false, loginErr: "", signingIn: false,
         section: "ann", sub: "all", query: "", sort: null, sideOpen: true, drawer: null, toast: "", toastErr: false, pulseId: null,
-        verseDraft: null, data: null, viewAs: "admin", busy: false, ovGroup: "all",
+        verseDraft: null, data: null, busy: false, ovGroup: "all",
         grpOpen: false, grpQuery: "", imgDrag: false, tick: 0,
       };
     }
 
     componentDidMount() {
       if (this.token) {
-        run("adminResume", this.token, "admin").then(r => {
+        run("adminResume", this.token).then(r => {
           if (r && r.success) this.setData(r.data, { authed: true, boot: false });
           else { this.token = ""; lsSet(AUTH, null); this.setState({ boot: false, loginErr: r && !r.expired ? r.message : "" }); }
         }).catch(() => this.setState({ boot: false, loginErr: "Couldn't reach the server. Check your connection and try again." }));
@@ -167,7 +167,7 @@ window.__appScriptRan = true;
       if (this.state.busy) return;
       this.setState({ busy: true });
       try {
-        const r = await run(fn, this.token, this.state.viewAs, ...args);
+        const r = await run(fn, this.token, ...args);
         if (!r || !r.success) {
           if (r && r.expired) return this.signOut(r.message);
           this.setState({ busy: false });
@@ -184,16 +184,7 @@ window.__appScriptRan = true;
     signOut(msg) {
       if (this.token) run("adminLogout", this.token).catch(() => {});
       this.token = ""; lsSet(AUTH, null);
-      this.setState({ authed: false, data: null, password: "", drawer: null, loginErr: msg || "", viewAs: "admin", pulseId: null, section: "ann", sub: "all", busy: false, verseDraft: null });
-    }
-
-    changeViewAs(v) {
-      this.setState({ viewAs: v, pulseId: null, sub: "all", ovGroup: "all", query: "", sort: null, drawer: null, busy: true });
-      run("adminResume", this.token, v).then(r => {
-        if (r && r.success) this.setData(r.data, { busy: false });
-        else if (r && r.expired) this.signOut(r.message);
-        else { this.setState({ busy: false }); this.toastMsg((r && r.message) || "Couldn't switch view.", true); }
-      }).catch(() => { this.setState({ busy: false }); this.toastMsg("Couldn't reach the server.", true); });
+      this.setState({ authed: false, data: null, password: "", drawer: null, loginErr: msg || "", pulseId: null, section: "ann", sub: "all", busy: false, verseDraft: null });
     }
 
     open(kind, idx, draft, expect) { this.setState({ drawer: { kind, idx, draft, expect }, grpOpen: false, grpQuery: "" }); }
@@ -268,7 +259,7 @@ window.__appScriptRan = true;
       };
 
       const sec = S.section, q = S.query.trim().toLowerCase();
-      const ro = me.role !== "admin", senior = me.role === "leader_all", leader = me.role === "leader_group" ? me.groupName : null;
+      const ro = me.role !== "admin", leader = me.role === "leader_group" ? me.groupName : null;
       const cur = sec === "pulse" ? D0.pulses.find(p => p.id === S.pulseId) : null;
       const view = sec === "pulse" ? (cur ? "p-" + S.sub : "pulses") : sec;
       const busy = S.busy;
@@ -487,7 +478,7 @@ window.__appScriptRan = true;
       const mOn = kind === "mod" && !!d.enabled;
       const swTrack = { width: 46, height: 28, borderRadius: 100, background: mOn ? "#2f76f4" : "#d5dde7", position: "relative", flexShrink: 0 };
       const swKnob = { position: "absolute", top: 3, left: mOn ? 21 : 3, width: 22, height: 22, borderRadius: "50%", background: "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,.2)", transition: "left .15s" };
-      const roleLabel = senior ? "Leader · All groups" : leader ? "Leader · " + leader : "Admin";
+      const roleLabel = leader ? "Mentor · " + leader : "Admin";
       const isTable = sec !== "verse" && view !== "p-overview";
       const showNew = (!ro || sec !== "pulse") && !!newBy[view];
       const page = { title: cur ? cur.windowTitle : titleBy[sec], crumb: cur ? "Pulse Check" : "", searchPh: view === "p-notfilled" || view === "p-submitted" ? "Search members" : `Search ${nouns[1]}` };
@@ -508,14 +499,6 @@ window.__appScriptRan = true;
           </div>
           <div style="border-top:1px solid #e4ebf2;padding:14px 12px 18px;display:flex;flex-direction:column;gap:10px;">
             ${S.sideOpen && html`
-              ${me.realRole === "admin" && html`<div style="display:flex;flex-direction:column;gap:6px;padding:0 4px;">
-                <div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8b98ac;">Viewing as</div>
-                <select value=${S.viewAs} disabled=${busy} onChange=${e => this.changeViewAs(e.target.value)} style="height:38px;border:1px solid #e4ebf2;border-radius:10px;padding:0 10px;font-size:13px;font-weight:600;color:#333d4a;background:#ffffff;">
-                  <option value="admin">Admin</option>
-                  <option value="leader_all">Leader — All groups</option>
-                  ${D0.groups.map(g => html`<option key=${g.id} value=${g.id}>Group leader — ${g.name}</option>`)}
-                </select>
-              </div>`}
               <div style="display:flex;align-items:center;gap:10px;padding:0 4px;">
                 <div style="width:32px;height:32px;border-radius:50%;background:#cae7ff;color:#2f76f4;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${me.initials}</div>
                 <div style="font-size:13px;color:#5b6b86;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title=${me.email}>${me.email}</div>
