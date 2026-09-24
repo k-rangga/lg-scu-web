@@ -1,6 +1,6 @@
 /* ==========================================================================
    ADMIN CONSOLE — server side
-   Served at <web app url>?page=admin (see doGet in Code.js). Reads and writes
+   Served at <web app url>?page=admin (see doGet in Code.js). File is AdminServer.js — Apps Script drops extensions, so it can't share a name with Admin.html. Reads and writes
    the same tabs the member app reads, in the same cell formats, so anything
    saved here shows up in the app on the next refresh.
 
