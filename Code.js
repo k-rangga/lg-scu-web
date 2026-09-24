@@ -21,11 +21,21 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
+/* Each tab is read at most once per request: every reader goes through here.
+   Writers call clearSheetMemo_() so later reads in the same request see them. */
+var SHEET_MEMO_ = {};
+function sheetValues_(sheetName) {
+  if (!(sheetName in SHEET_MEMO_)) {
+    const sheet = ss_().getSheetByName(sheetName);
+    SHEET_MEMO_[sheetName] = sheet ? sheet.getDataRange().getValues() : null;
+  }
+  return SHEET_MEMO_[sheetName];
+}
+function clearSheetMemo_() { SHEET_MEMO_ = {}; }
+
 function readSheetAsMap(sheetName) {
-  const sheet = ss_().getSheetByName(sheetName);
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
+  const data = sheetValues_(sheetName);
+  if (!data || data.length < 2) return [];
   const headers = data[0].map(h => String(h).trim());
   return data.slice(1).map(row => {
     const obj = {};

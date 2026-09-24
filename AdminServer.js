@@ -74,6 +74,7 @@ function sheetWithHeaders_(name, headers) {
     if (!(h in map)) {
       lastHeader += 1;
       sheet.getRange(1, lastHeader).setValue(h);
+      clearSheetMemo_();
       map[h] = lastHeader;
     }
   });
@@ -86,6 +87,7 @@ function appendByHeader_(sheet, obj) {
   const row = new Array(width).fill('');
   Object.keys(obj).forEach(k => { if (map[k]) row[map[k] - 1] = obj[k]; });
   sheet.appendRow(row);
+  clearSheetMemo_();
   return sheet.getLastRow();
 }
 
@@ -99,14 +101,13 @@ function writeByHeader_(sheet, rowNum, obj, textKeys) {
     if (textKeys && textKeys.indexOf(k) !== -1) cell.setNumberFormat('@');
     cell.setValue(obj[k]);
   });
+  clearSheetMemo_();
 }
 
 /* Rows as objects with their sheet row number; fully blank rows are skipped. */
 function readRows_(name) {
-  const sheet = ss_().getSheetByName(name);
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
+  const data = sheetValues_(name);
+  if (!data || data.length < 2) return [];
   const headers = data[0].map(h => String(h).trim());
   const out = [];
   for (let i = 1; i < data.length; i++) {
@@ -328,11 +329,11 @@ function adminLogin(email, password) {
   const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 8);
   PropertiesService.getScriptProperties().setProperty(
     ADMIN_SESSION_PREFIX + token, JSON.stringify({ email: cleanEmail, created: Date.now() }));
-  return { success: true, token: token, data: adminData_(ctx) };
+  return { success: true, token: token, data: adminDataCached_(ctx) };
 }
 
 function adminResume(token) {
-  return adminCall_(token, null, ctx => ({ data: adminData_(ctx) }));
+  return adminCall_(token, null, () => ({}));
 }
 
 function adminLogout(token) {
@@ -351,9 +352,13 @@ function adminCall_(token, need, fn) {
     if (need === 'pulse' && ctx.role !== 'admin') throw new Error('Only admins can change pulse checks.');
     if (need) { lock = LockService.getScriptLock(); lock.waitLock(20000); }
     const out = fn(ctx) || {};
-    if (need) SpreadsheetApp.flush();
+    if (need) {
+      SpreadsheetApp.flush();
+      clearSheetMemo_();
+      bumpAdminDataGen_();
+    }
     out.success = true;
-    if (!out.data) out.data = adminData_(ctx);
+    if (!out.data) out.data = adminDataCached_(ctx);
     return out;
   } catch (err) {
     const msg = String(err && err.message || err);
@@ -363,7 +368,54 @@ function adminCall_(token, need, fn) {
   }
 }
 
-/* ---- Read model ------------------------------------------------------------ */
+/* ---- Read model ------------------------------------------------------------
+   The payload is cached for ADMIN_CACHE_SECONDS per role + group, so a reload
+   skips the sheet reads. Every save bumps a generation number that is part of
+   the key, so the next read after a save is always fresh. Edits made directly
+   in the spreadsheet show up once the cached copy expires.
+   -------------------------------------------------------------------------- */
+
+const ADMIN_CACHE_SECONDS = 60;
+const ADMIN_CACHE_CHUNK = 90000;   // CacheService allows 100 KB per value
+
+function adminCacheKey_(ctx) {
+  const gen = PropertiesService.getScriptProperties().getProperty('ADMIN_DATA_GEN') || '0';
+  return 'admdata_' + gen + '_' + ctx.role + '_' + (ctx.role === 'admin' ? 'all' : ctx.groupId);
+}
+
+function bumpAdminDataGen_() {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('ADMIN_DATA_GEN', String((parseInt(props.getProperty('ADMIN_DATA_GEN') || '0', 10) || 0) + 1));
+}
+
+function adminDataCached_(ctx) {
+  const cache = CacheService.getScriptCache(), key = adminCacheKey_(ctx);
+  try {
+    const n = parseInt(cache.get(key + '_n') || '0', 10);
+    if (n > 0) {
+      const keys = []; for (let i = 0; i < n; i++) keys.push(key + '_' + i);
+      const parts = cache.getAll(keys);
+      if (keys.every(k => k in parts)) {
+        const data = JSON.parse(keys.map(k => parts[k]).join(''));
+        data.serverNow = Date.now();
+        return data;
+      }
+    }
+  } catch (err) { /* fall through to a fresh read */ }
+
+  const data = adminData_(ctx);
+  try {
+    const json = JSON.stringify(data), put = {};
+    const n = Math.ceil(json.length / ADMIN_CACHE_CHUNK);
+    if (n <= 9) {
+      for (let i = 0; i < n; i++) put[key + '_' + i] = json.slice(i * ADMIN_CACHE_CHUNK, (i + 1) * ADMIN_CACHE_CHUNK);
+      put[key + '_n'] = String(n);
+      cache.putAll(put, ADMIN_CACHE_SECONDS);
+    }
+  } catch (err) { /* caching is best effort */ }
+  return data;
+}
+
 
 function adminData_(ctx) {
   const tz = tz_();
@@ -605,6 +657,7 @@ function adminSaveItem(token, kind, row, expectTitle, d) {
       // Newest announcement first, as the app lists them in sheet order.
       values.time = new Date();
       sheet.insertRowBefore(2);
+      clearSheetMemo_();
       writeByHeader_(sheet, 2, values);
     } else {
       if (kind === 'res') values.dateAdded = new Date();

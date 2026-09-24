@@ -132,7 +132,8 @@ window.__appScriptRan = true;
 
     componentDidMount() {
       if (this.token) {
-        run("adminResume", this.token).then(r => {
+        const early = window.__resume; window.__resume = null;
+        (early || run("adminResume", this.token)).then(r => {
           if (r && r.success) this.setData(r.data, { authed: true, boot: false });
           else { this.token = ""; lsSet(AUTH, null); this.setState({ boot: false, loginErr: r && !r.expired ? r.message : "" }); }
         }).catch(() => this.setState({ boot: false, loginErr: "Couldn't reach the server. Check your connection and try again." }));

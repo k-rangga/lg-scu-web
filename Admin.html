@@ -36,6 +36,16 @@ window.__bootFail = function (msg) {
 setTimeout(function () {
   if (!window.__appStarted) window.__bootFail("Startup stalled — library: " + (typeof htmPreact) + ", app script ran: " + !!window.__appScriptRan + ", ready: " + document.readyState + (window.__appError ? ", error: " + window.__appError : ""));
 }, 6000);
+/* Start fetching data now, in parallel with the library download; the app
+   picks this promise up when it mounts. */
+try {
+  var __auth = JSON.parse(localStorage.getItem("scu-admin-console-auth") || "null");
+  if (__auth && __auth.token && window.google && google.script && google.script.run) {
+    window.__resume = new Promise(function (res, rej) {
+      google.script.run.withSuccessHandler(res).withFailureHandler(rej).adminResume(__auth.token);
+    });
+  }
+} catch (e) { window.__resume = null; }
 window.addEventListener("error", function (e) { window.__bootFail((e.message || "Script error") + (e.filename ? " (" + e.filename.split("/").pop() + ":" + e.lineno + ")" : "")); });
 </script>
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.umd.js" onerror="window.__bootFail('Could not load the interface library from cdn.jsdelivr.net.')"></script>
