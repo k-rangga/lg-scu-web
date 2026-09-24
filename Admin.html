@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCU Small Group · Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#ffffff;font-family:'Geist',"Helvetica Neue",Helvetica,Arial,sans-serif;color:#333d4a;}
+a{color:#2f76f4;text-decoration:none;}a:hover{color:#1d4ed8;}
+input,textarea,button,select{font-family:inherit;}
+input,textarea{box-sizing:border-box;}
+input:focus,textarea:focus{outline:none;border-color:#2f76f4 !important;}
+button{border:none;background:none;cursor:pointer;padding:0;color:inherit;}
+button:disabled{cursor:not-allowed;}
+.hov-soft:hover{background:#f4f6f9 !important;}
+.hov-danger:hover{background:#fdecec !important;}
+.hov-primary:hover{background:#1d4ed8 !important;}
+.row-click:hover{background:#f9fbfd;}
+.main{flex:1;min-width:0;padding:24px 40px 60px;box-sizing:border-box;}
+@media (max-width:760px){.main{padding:20px 16px 48px;}}
+.boot{min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8b98ac;font-size:15px;}
+</style>
+</head>
+<body>
+<div id="root"><div class="boot">Loading…</div></div>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.umd.js"></script>
+<?!= include('AdminApp'); ?>
+</body>
+</html>

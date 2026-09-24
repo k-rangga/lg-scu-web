@@ -1,3 +1,11 @@
+/* The member app and the admin console both read the same spreadsheet. It is
+   opened by ID so the script works whether or not it is bound to the sheet. */
+const SHEET_ID = '1XhVmwTimVD1VaPkNVCpriNn_g7wcJXZjPGC7wJ-1vaI';
+var SS_CACHE_ = null;
+function ss_() {
+  return SS_CACHE_ || (SS_CACHE_ = SpreadsheetApp.openById(SHEET_ID));
+}
+
 // Global session state holder for the active request execution context
 var CURRENT_SESSION_EMAIL = "";
 
@@ -258,7 +266,7 @@ function getData(userEmail, currentUserRow) {
     const verseData = readSheetAsMap('Verse')[0] || {};
     const events = readSheetAsMap('Events');
     const rawResources = readSheetAsMap('Resources');
-    const pulseConfig = readSheetAsMap('Pulse')[0] || {};
+    const pulseConfig = activePulse_() || {};
     const posts = readSheetAsMap('Posts');
     // readSheetAsMap returns [] for a tab that does not exist yet, so a Reactions
     // sheet that has never been written to reads as "nobody has reacted".
@@ -268,8 +276,10 @@ function getData(userEmail, currentUserRow) {
 
     const reactionsByPost = aggregateReactions_(reactions, currentUser.userId);
 
-    const hasSubmittedPulse = pulseResponses.some(r =>
-      String(r.userId || r.userid || '').trim() === String(currentUser.userId || '').trim()
+    const pulseRows = readPulses_();
+    const hasSubmittedPulse = readPulseResponses_(pulseRows).some(r =>
+      r.pulseId === String(pulseConfig.pulse_id || '').trim() &&
+      r.userId === String(currentUser.userId || '').trim()
     );
 
     const ss = ss_();
@@ -451,6 +461,10 @@ function getData(userEmail, currentUserRow) {
 
     const groupEvents = events.filter(e => {
       const gId = e['Group ID'] || e.GroupID || e.groupId;
+      // "ALL" rows come from the admin console's "All groups" / "Mentors only".
+      if (String(gId || "").trim().toUpperCase() === "ALL") {
+        return !isTruthyCell_(e.is_mentor_only) || isMentor;
+      }
       if (gId !== undefined && String(gId).trim() !== "") {
         return String(gId).trim() === String(currentUser.groupId).trim();
       }
@@ -1188,8 +1202,7 @@ function saveReflectionWithFile(payload) {
 function savePulse(payload) {
   if (payload && payload.userEmail) setSessionEmail(payload.userEmail);
   const user = getCurrentUserSession();
-  const ss = ss_();
-  const pulseConfig = readSheetAsMap('Pulse')[0] || {};
+  const pulseConfig = activePulse_() || {};
   const questionsList = pulseConfig.questions ? String(pulseConfig.questions).split('|').filter(q => q.trim() !== "") : [];
   const openQuestionsList = pulseConfig.open_questions ? String(pulseConfig.open_questions).split('|').filter(q => q.trim() !== "") : [];
   
@@ -1205,15 +1218,16 @@ function savePulse(payload) {
   }
   const straightforwardString = "{" + parts.join(";") + "}";
 
-  let pulseSheet = ss.getSheetByName('PulseResponses');
-  if (!pulseSheet) {
-    pulseSheet = ss.insertSheet('PulseResponses');
-    pulseSheet.appendRow(['userId', 'timestamp', 'answers', 'note']);
-  }
-
-  pulseSheet.appendRow([
-    user.userId, new Date().toISOString(), straightforwardString, payload.note || ""
-  ]);
+  // Written by header so the pulse id lands in its own column; the admin
+  // console groups responses by it.
+  const sheet = sheetWithHeaders_('PulseResponses', ['userId', 'pulse id', 'timestamp', 'answers', 'note']);
+  appendByHeader_(sheet, {
+    'userId': user.userId,
+    'pulse id': String(pulseConfig.pulse_id || ''),
+    'timestamp': new Date().toISOString(),
+    'answers': straightforwardString,
+    'note': payload.note || ""
+  });
 }
 
 /* Written by header name rather than position: the Posts sheet is edited by
@@ -1593,6 +1607,7 @@ function readSheetAsMap(sheetName) {
 
 function doGet(e) {
   try {
+    if (e && e.parameter && e.parameter.page === 'admin') return adminDoGet_();
     return HtmlService.createTemplateFromFile('Index')
       .evaluate()
       .setTitle('Small Group')

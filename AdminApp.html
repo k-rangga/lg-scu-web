@@ -1,0 +1,817 @@
+<script>
+/* ==========================================================================
+   ADMIN CONSOLE — client
+   A port of the "Admin Console" design prototype onto Preact (htm, no build
+   step). State and derived values follow the prototype's renderVals(); the
+   difference is that data comes from and goes to Admin.js instead of
+   localStorage, and pulse answers are the real ones.
+   ========================================================================== */
+(function () {
+  const { html, render, Component } = htmPreact;
+  const AUTH = "scu-admin-console-auth";
+
+  const lsGet = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+
+  const run = (fn, ...args) => new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn](...args);
+  });
+
+  /* ---- Time, always in the script's timezone ---------------------------- */
+  function zparts(ms, tz, opts) {
+    const o = {};
+    new Intl.DateTimeFormat("en-US", Object.assign({ timeZone: tz }, opts)).formatToParts(new Date(ms)).forEach(p => { o[p.type] = p.value; });
+    return o;
+  }
+  // "Mon, 22 Sep · 9:14 AM"
+  function fmtMs(ms, tz) {
+    if (!ms) return "Not set";
+    const p = zparts(ms, tz, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+    return `${p.weekday}, ${p.day} ${p.month} · ${p.hour}:${p.minute} ${p.dayPeriod}`;
+  }
+  function fmtDay(ymd) {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const p = zparts(Date.UTC(y, m - 1, d, 12), "UTC", { weekday: "short", day: "numeric", month: "short" });
+    return `${p.weekday}, ${p.day} ${p.month}`;
+  }
+  function fmt12(t) {
+    const [h, m] = String(t).split(":").map(Number);
+    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+  }
+  function tzOffset(ms, tz) {
+    const o = zparts(ms, tz, { hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+    return Date.UTC(+o.year, +o.month - 1, +o.day, +o.hour % 24, +o.minute, +o.second) - Math.floor(ms / 1000) * 1000;
+  }
+  function wallMs(ymd, hm, tz) {
+    if (!ymd) return NaN;
+    const [y, m, d] = ymd.split("-").map(Number), [hh, mm] = (hm || "00:00").split(":").map(Number);
+    const guess = Date.UTC(y, m - 1, d, hh, mm);
+    return guess - tzOffset(guess - tzOffset(guess, tz), tz);
+  }
+  function todayYmd(ms, tz) {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+  }
+
+  function detect(url) {
+    let u; try { u = new URL(url); } catch (e) { return ""; }
+    const h = u.hostname.replace(/^www\./, ""), p = u.pathname;
+    if (/\.pdf$/i.test(p)) return "PDF";
+    if (/youtube\.com|youtu\.be/.test(h)) return "YouTube";
+    if (h === "docs.google.com" && p.startsWith("/presentation")) return "Google Slides";
+    if (h === "docs.google.com" && p.startsWith("/document")) return "Google Docs";
+    if (h === "docs.google.com" && p.startsWith("/spreadsheets")) return "Google Sheets";
+    if (h === "drive.google.com") return "Drive";
+    if (/canva\.com/.test(h)) return "Canva";
+    return "Website";
+  }
+  const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; } };
+  const primaryBtn = (off, full) => ({ height: full ? 52 : 44, padding: "0 20px", borderRadius: full ? 14 : 10, fontSize: full ? 16 : 14, fontWeight: 600, background: off ? "#e4ebf2" : "#2f76f4", color: off ? "#8b98ac" : "#ffffff", cursor: off ? "not-allowed" : "pointer" });
+  const chip = on => ({ height: 32, padding: "0 14px", borderRadius: 100, fontSize: 13, fontWeight: 600, background: on ? "#2f76f4" : "#f4f6f9", color: on ? "#ffffff" : "#5b6b86" });
+  const empty = {
+    ann: { title: "", tag: "", time: "", imgUrl: "", detail: "" },
+    res: { title: "", group: "", fileUrl: "" },
+    ev: { title: "", group: "", date: "", start: "19:00", end: "", location: "", detail: "", link: "" },
+    q: { text: "", type: "scale" },
+  };
+  const SC = ["#d94545", "#f0a8a8", "#dfe5ec", "#8fbcff", "#2f76f4"], SCT = ["#ffffff", "#7a1f1f", "#333d4a", "#123a7a", "#ffffff"], SCL = ["1 · Not at all", "2", "3 · Somewhat", "4", "5 · Very"];
+  const INPUT = "height:46px;border:1.5px solid #e4ebf2;border-radius:10px;padding:0 14px;font-size:15px;color:#111820;background:#ffffff;";
+  const AREA = "border:1.5px solid #e4ebf2;border-radius:10px;padding:12px 14px;font-size:15px;line-height:1.5;color:#111820;resize:vertical;";
+
+  /* ---- Icons -------------------------------------------------------------- */
+  const NAV_ICONS = {
+    module: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5h6a4 4 0 0 1 4 4v11a3 3 0 0 0-3-3H2z"></path><path d="M22 5h-6a4 4 0 0 0-4 4v11a3 3 0 0 1 3-3h7z"></path></svg>`,
+    verse: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"></path><path d="M12 6v8M8.5 9h7"></path></svg>`,
+    ann: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"></path><path d="M15 9a3 3 0 0 1 0 6"></path><path d="M18 6a7 7 0 0 1 0 12"></path></svg>`,
+    events: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M3 10h18M8 3v4M16 3v4"></path></svg>`,
+    res: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>`,
+    pulse: html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5h3.4l1.9-5 3.4 10 2.4-7 1.3 2H21"></path></svg>`,
+  };
+
+  const Field = ({ label, children, style }) => html`
+    <div style=${Object.assign({ display: "flex", flexDirection: "column", gap: 8 }, style || {})}>
+      <div style="font-size:14px;font-weight:600;">${label}</div>
+      ${children}
+    </div>`;
+
+  class App extends Component {
+    constructor() {
+      super();
+      const a = lsGet(AUTH);
+      this.token = a && a.token || "";
+      this.offset = 0;
+      this.state = {
+        boot: !!this.token, authed: false, email: a && a.email || "", password: "", showPw: false, loginErr: "", signingIn: false,
+        section: "ann", sub: "all", query: "", sort: null, sideOpen: true, drawer: null, toast: "", toastErr: false, pulseId: null,
+        verseDraft: null, moduleDraft: null, data: null, viewAs: "admin", busy: false, ovGroup: "all",
+        grpOpen: false, grpQuery: "", imgDrag: false, tick: 0,
+      };
+    }
+
+    componentDidMount() {
+      if (this.token) {
+        run("adminResume", this.token, "admin").then(r => {
+          if (r && r.success) this.setData(r.data, { authed: true, boot: false });
+          else { this.token = ""; lsSet(AUTH, null); this.setState({ boot: false, loginErr: r && !r.expired ? r.message : "" }); }
+        }).catch(() => this.setState({ boot: false, loginErr: "Couldn't reach the server. Check your connection and try again." }));
+      }
+      // Event Upcoming/Past labels; pulse status has its own exact-time timer.
+      this._iv = setInterval(() => this.setState(s => ({ tick: s.tick + 1 })), 30000);
+    }
+    componentWillUnmount() { clearInterval(this._iv); clearTimeout(this._flip); clearTimeout(this._t); }
+
+    now() { return Date.now() + this.offset; }
+
+    setData(data, extra) {
+      this.offset = data.serverNow - Date.now();
+      this.setState(Object.assign({ data }, extra || {}), () => this.scheduleFlip());
+    }
+
+    /* Re-renders at the next pulse open/close instant so the status flips on time. */
+    scheduleFlip() {
+      clearTimeout(this._flip);
+      const d = this.state.data; if (!d) return;
+      const n = this.now();
+      const next = d.pulses.reduce((m, p) => [p.openMs, p.closeMs].reduce((mm, t) => (t > n && t < mm ? t : mm), m), Infinity);
+      if (next === Infinity) return;
+      this._flip = setTimeout(() => { this.setState(s => ({ tick: s.tick + 1 })); this.scheduleFlip(); }, Math.min(next - n + 50, 2147483000));
+    }
+
+    toastMsg(msg, err) {
+      clearTimeout(this._t);
+      this.setState({ toast: msg, toastErr: !!err });
+      this._t = setTimeout(() => this.setState({ toast: "" }), err ? 6000 : 3000);
+    }
+
+    async mutate(fn, args, msg, patch) {
+      if (this.state.busy) return;
+      this.setState({ busy: true });
+      try {
+        const r = await run(fn, this.token, this.state.viewAs, ...args);
+        if (!r || !r.success) {
+          if (r && r.expired) return this.signOut(r.message);
+          this.setState({ busy: false });
+          return this.toastMsg((r && r.message) || "Something went wrong.", true);
+        }
+        this.setData(r.data, Object.assign({ busy: false }, patch ? patch(r) : {}));
+        this.toastMsg(msg);
+      } catch (e) {
+        this.setState({ busy: false });
+        this.toastMsg("Couldn't save — " + ((e && e.message) || "network error"), true);
+      }
+    }
+
+    signOut(msg) {
+      if (this.token) run("adminLogout", this.token).catch(() => {});
+      this.token = ""; lsSet(AUTH, null);
+      this.setState({ authed: false, data: null, password: "", drawer: null, loginErr: msg || "", viewAs: "admin", pulseId: null, section: "ann", sub: "all", busy: false, verseDraft: null, moduleDraft: null });
+    }
+
+    changeViewAs(v) {
+      this.setState({ viewAs: v, pulseId: null, sub: "all", ovGroup: "all", query: "", sort: null, drawer: null, busy: true });
+      run("adminResume", this.token, v).then(r => {
+        if (r && r.success) this.setData(r.data, { busy: false });
+        else if (r && r.expired) this.signOut(r.message);
+        else { this.setState({ busy: false }); this.toastMsg((r && r.message) || "Couldn't switch view.", true); }
+      }).catch(() => { this.setState({ busy: false }); this.toastMsg("Couldn't reach the server.", true); });
+    }
+
+    open(kind, idx, draft, expect) { this.setState({ drawer: { kind, idx, draft, expect }, grpOpen: false, grpQuery: "" }); }
+
+    renderLogin() {
+      const S = this.state;
+      const doLogin = () => {
+        if (S.signingIn) return;
+        if (!/.+@.+\..+/.test(S.email.trim()) || !S.password) return this.setState({ loginErr: "Enter a valid email and your password." });
+        this.setState({ signingIn: true, loginErr: "" });
+        run("adminLogin", S.email.trim(), S.password).then(r => {
+          if (!r || !r.success) return this.setState({ signingIn: false, loginErr: (r && r.message) || "Sign in failed." });
+          this.token = r.token; lsSet(AUTH, { token: r.token, email: S.email.trim().toLowerCase() });
+          this.setData(r.data, { authed: true, signingIn: false, password: "" });
+        }).catch(() => this.setState({ signingIn: false, loginErr: "Couldn't reach the server. Try again." }));
+      };
+      const onKey = e => { if (e.key === "Enter") doLogin(); };
+      return html`
+      <div style="min-height:100vh;background:#f4f6f9;display:flex;align-items:center;justify-content:center;padding:32px 20px;box-sizing:border-box;">
+        <div style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:28px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="width:44px;height:44px;border-radius:13px;background:#2f76f4;color:#ffffff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;">SG</div>
+            <div style="display:flex;flex-direction:column;">
+              <div style="font-size:16px;font-weight:700;color:#1c3249;">SCU Small Group</div>
+              <div style="font-size:13px;color:#8b98ac;">Admin</div>
+            </div>
+          </div>
+          <div style="background:#ffffff;border-radius:22px;padding:32px 28px;box-shadow:0 10px 30px -18px rgba(5,28,44,.4);display:flex;flex-direction:column;gap:22px;">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <div style="font-size:30px;font-weight:600;letter-spacing:-.5px;color:#1c3249;">Admin sign in</div>
+              <div style="font-size:15px;color:#5b6b86;">Manage what members see in the app.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:14px;font-weight:600;">Email</div>
+              <input type="email" value=${S.email} onInput=${e => this.setState({ email: e.target.value, loginErr: "" })} onKeyDown=${onKey} placeholder="you@scu.org" autocomplete="username" style="height:48px;border:1.5px solid #e4ebf2;background:#ffffff;border-radius:12px;padding:0 16px;font-size:15px;color:#111820;" />
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:14px;font-weight:600;">Password</div>
+              <div style="position:relative;display:flex;">
+                <input type=${S.showPw ? "text" : "password"} value=${S.password} onInput=${e => this.setState({ password: e.target.value, loginErr: "" })} onKeyDown=${onKey} placeholder="Enter your password" autocomplete="current-password" style="flex:1;min-width:0;height:48px;border:1.5px solid #e4ebf2;background:#ffffff;border-radius:12px;padding:0 64px 0 16px;font-size:15px;color:#111820;" />
+                <button onClick=${() => this.setState({ showPw: !S.showPw })} style="position:absolute;right:8px;top:8px;height:32px;padding:0 10px;border-radius:8px;font-size:13px;font-weight:600;color:#2f76f4;">${S.showPw ? "Hide" : "Show"}</button>
+              </div>
+            </div>
+            ${S.loginErr && html`
+              <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:#fdecec;color:#b42318;font-size:14px;font-weight:500;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#d94545" style="flex-shrink:0;"><path d="M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z"></path></svg>
+                <span>${S.loginErr}</span>
+              </div>`}
+            <button onClick=${doLogin} style=${Object.assign(primaryBtn(false, true), { opacity: S.signingIn ? .7 : 1 })}>${S.signingIn ? "Signing in…" : "Sign in"}</button>
+          </div>
+          <div style="font-size:13px;color:#8b98ac;text-align:center;">Members sign in through the SCU Small Group app.</div>
+        </div>
+      </div>`;
+    }
+
+    render() {
+      const S = this.state;
+      if (S.boot) return html`<div class="boot">Loading…</div>`;
+      if (!S.authed || !S.data) return this.renderLogin();
+      const D0 = S.data, tz = D0.tz, NOW = this.now();
+      const me = D0.me, groups = D0.groups.map(g => g.name), members = D0.members;
+
+      const fmtDt = ms => fmtMs(ms, tz);
+      const evTime = e => !e.date ? "Not set" : fmtDay(e.date) + (e.start ? " · " + fmt12(e.start) + (e.end ? "–" + fmt12(e.end) : "") : "");
+      const evPast = e => { const ms = wallMs(e.date, e.end || e.start || "23:59", tz); return !isNaN(ms) && ms < NOW; };
+      const scoped = g => g && g !== "all" ? members.filter(m => m.group === g) : members;
+      const stats = (p, g) => {
+        const ms = scoped(g), ids = new Set(ms.map(m => m.userId));
+        const total = ms.length, done = p.submitted.filter(s => ids.has(s.userId)).length;
+        const scheduled = !!p.openMs && p.openMs > NOW;
+        return { total, done, left: total - done, scheduled, open: !scheduled && (!p.closeMs || p.closeMs > NOW) };
+      };
+
+      const sec = S.section, q = S.query.trim().toLowerCase();
+      const ro = me.role !== "admin", senior = me.role === "leader_all", leader = me.role === "leader_group" ? me.groupName : null;
+      const cur = sec === "pulse" ? D0.pulses.find(p => p.id === S.pulseId) : null;
+      const view = sec === "pulse" ? (cur ? "p-" + S.sub : "pulses") : sec;
+      const busy = S.busy;
+
+      const nav = [["module", "Current Module"], ["verse", "Verse of the Month"], ["ann", "Announcements"], ["events", "Events"], ["res", "Resources"], ["pulse", "Pulse Check"]].map(([id, label]) => {
+        const on = sec === id;
+        return { id, label, onClick: () => this.setState({ section: id, sub: "all", query: "", sort: null, pulseId: null }),
+          style: { display: "flex", alignItems: "center", gap: 12, height: 50, padding: "0 12px", borderRadius: 10, fontSize: 15, fontWeight: on ? 600 : 500, color: on ? "#2f76f4" : "#5b6b86", background: on ? "#eef5ff" : "transparent", justifyContent: S.sideOpen ? "flex-start" : "center", whiteSpace: "nowrap" } };
+      });
+      const cs = cur ? stats(cur, leader) : null;
+      const resGroups = [...new Set(D0.res.map(r => r.group || "Ungrouped"))].sort((a, b) => (a === "Onboarding" ? -1 : b === "Onboarding" ? 1 : a.localeCompare(b, undefined, { numeric: true })));
+      const subsBy = {
+        ann: [["all", "All"], ...[...new Set(D0.ann.map(a => a.tag).filter(Boolean))].map(t => [t, t])],
+        res: [["all", "All"]],
+        events: [["all", "All"], ["All groups", "All groups"], ["Mentors only", "Mentors only"], ...groups.map(g => [g, g])],
+        pulses: [["all", "All"], ["open", "Open"], ["closed", "Closed"]],
+        verse: [["all", "Verse"]], module: [["all", "Module"]],
+      };
+      const childSubs = cur ? [...(ro ? [] : [["questions", `Questions (${cur.items.length})`]]), ["overview", "Overview"], ["notfilled", `Not filled in (${cs.left})`], ["submitted", `Submitted (${cs.done})`]] : [];
+      const subtabs = (view.startsWith("p-") ? childSubs : subsBy[view] || []).map(([id, label]) => {
+        const on = S.sub === id;
+        return { label: label.toUpperCase(), onClick: () => this.setState({ sub: id, query: "", sort: null }),
+          style: { height: 50, padding: "0 20px", fontSize: 14, fontWeight: 500, letterSpacing: ".03em", whiteSpace: "nowrap", color: on ? "#2f76f4" : "#333d4a", borderBottom: on ? "2px solid #2f76f4" : "2px solid transparent", flexShrink: 0 } };
+      });
+
+      const badge = (bg, fg) => ({ alignSelf: "flex-start", fontSize: 12, fontWeight: 600, background: bg, color: fg, borderRadius: 100, padding: "3px 10px", whiteSpace: "nowrap" });
+      const T = t => ({ text: t, isText: true }), M = t => ({ text: t, isMuted: true }), P = (t, sub) => ({ text: t, sub, isPrimary: true }), B = (t, bg, fg) => ({ text: t, isBadge: true, badgeStyle: badge(bg, fg) });
+      const stop = fn => e => { e && e.stopPropagation && e.stopPropagation(); fn(); };
+      const del = (label, fn, args, msg) => { if (!busy && confirm(`Delete "${label}"?`)) this.mutate(fn, args, msg); };
+      const memberMap = Object.fromEntries(members.map(m => [m.userId, m]));
+      const A = !ro || sec !== "pulse", inScope = uid => !leader || (memberMap[uid] && memberMap[uid].group === leader);
+      const saveItems = (items, msg, patch) => this.mutate("adminSaveQuestions", [cur.id, items], msg, patch);
+
+      const cfgBy = {
+        ann: { grid: "minmax(240px,2.6fr) 130px minmax(140px,1.2fr) 110px 150px", heads: [["TITLE", "title"], ["TAG", "tag"], ["CREATED", null], ["IMAGE", null], ["", null]] },
+        events: { grid: "minmax(220px,2.2fr) 150px minmax(190px,1.3fr) minmax(130px,1fr) 110px 150px", heads: [["EVENT", "title"], ["GROUP", "group"], ["WHEN", "date"], ["LOCATION", "location"], ["STATUS", null], ["", null]] },
+        res: { grid: "minmax(240px,2.4fr) minmax(140px,1fr) minmax(180px,1.4fr) 150px", heads: [["TITLE", "title"], ["MODULE GROUP", "group"], ["LINK", null], ["", null]] },
+        pulses: { grid: "minmax(220px,2.2fr) minmax(150px,1.2fr) minmax(150px,1.2fr) minmax(150px,1.1fr) 120px 100px" + (ro ? "" : " 150px"), heads: [["PULSE CHECK", "windowTitle"], ["OPENS", "openMs"], ["CLOSES", "closeMs"], ["SUBMITTED", "done"], ["NOT FILLED IN", "left"], ["STATUS", null], ...(ro ? [] : [["", null]])] },
+        "p-questions": { grid: "60px minmax(300px,4fr) 130px 150px", heads: [["#", null], ["QUESTION", "text"], ["TYPE", "type"], ["", null]] },
+        "p-notfilled": { grid: "minmax(240px,2fr) minmax(160px,1.2fr) minmax(200px,1.4fr)", heads: [["NAME", "name"], ["GROUP", "group"], ["EMAIL", "email"]] },
+        "p-submitted": { grid: "minmax(240px,2fr) minmax(160px,1.2fr) minmax(180px,1.2fr) 120px", heads: [["NAME", "name"], ["GROUP", "group"], ["SUBMITTED", "at"], ["", null]] },
+      };
+      const cfg = cfgBy[view] || cfgBy.ann;
+      let rows = [];
+      if (view === "ann") rows = D0.ann.map(a => ({ key: a.row, o: a, match: [a.title, a.tag, a.detail].join(" "), keep: S.sub === "all" || a.tag === S.sub, hasActions: A, editLabel: "Edit",
+        cells: [P(a.title, a.detail), a.tag ? B(a.tag, "#cae7ff", "#2f76f4") : M("—"), a.time ? T(a.time) : M("—"), a.imgUrl ? B("Added", "#e6f4ea", "#15803d") : M("None")],
+        onEdit: stop(() => this.open("ann", a.row, Object.assign({}, empty.ann, a), a.title)), onDelete: stop(() => del(a.title, "adminDeleteItem", ["ann", a.row, a.title], "Announcement deleted")) }));
+      if (view === "events") rows = D0.events.map(e => { const past = evPast(e);
+        return { key: e.row, o: e, match: [e.title, e.group, e.location, e.detail].join(" "), keep: S.sub === "all" || e.group === S.sub, hasActions: A, editLabel: "Edit",
+          cells: [P(e.title, e.detail), e.group ? B(e.group, "#cae7ff", "#2f76f4") : M("—"), T(evTime(e)), e.location ? T(e.location) : M("—"), past ? B("Past", "#f0f2f7", "#5b6b86") : B("Upcoming", "#e6f4ea", "#15803d")],
+          onEdit: stop(() => this.open("ev", e.row, Object.assign({}, empty.ev, e), e.title)), onDelete: stop(() => del(e.title, "adminDeleteItem", ["ev", e.row, e.title], "Event deleted")) }; });
+      if (view === "res") rows = D0.res.map(r => ({ key: r.row, o: r, match: [r.title, r.group, r.fileUrl].join(" "), keep: true, hasActions: A, editLabel: "Edit",
+        cells: [P(r.title, detect(r.fileUrl)), r.group ? B(r.group, "#cae7ff", "#2f76f4") : M("Ungrouped"), { text: host(r.fileUrl), href: r.fileUrl, isLink: true }],
+        onEdit: stop(() => this.open("res", r.row, Object.assign({}, empty.res, r), r.title)), onDelete: stop(() => del(r.title, "adminDeleteItem", ["res", r.row, r.title], "Resource deleted")) }));
+      if (view === "pulses") rows = D0.pulses.map(p => {
+        const st = stats(p, leader), n = p.items.length, pct = st.total ? Math.round(st.done / st.total * 100) : 0;
+        const go = () => this.setState({ pulseId: p.id, sub: ro ? "overview" : "questions", query: "", sort: null, ovGroup: "all" });
+        return { key: p.id, o: Object.assign({}, p, { done: st.done, left: st.left }), match: p.windowTitle, keep: S.sub === "all" || (S.sub === "open") === st.open, hasActions: !ro, editLabel: "View", onRow: go,
+          cells: [P(p.windowTitle, `${n} ${n === 1 ? "question" : "questions"} · ~${Math.max(1, Math.ceil(n * 30 / 60))} min`), T(fmtDt(p.openMs)), T(fmtDt(p.closeMs)),
+            { isProgress: true, text: `${st.done} / ${st.total}`, barStyle: { width: pct + "%", height: "100%", borderRadius: 100, background: st.left ? "#2f76f4" : "#15803d" } },
+            st.left ? B(`${st.left} ${st.left === 1 ? "member" : "members"}`, "#fdecec", "#d94545") : B("All in", "#e6f4ea", "#15803d"),
+            st.scheduled ? B("Scheduled", "#cae7ff", "#2f76f4") : st.open ? B("Open", "#e6f4ea", "#15803d") : B("Closed", "#f0f2f7", "#5b6b86")],
+          onEdit: stop(go), onDelete: stop(() => del(p.windowTitle, "adminDeletePulse", [p.id], "Pulse check deleted")) };
+      });
+      if (view === "p-questions") rows = cur.items.map((it, i) => ({ key: i, o: it, match: it.text, keep: true, hasActions: A, editLabel: "Edit",
+        cells: [M(String(i + 1)), P(it.text), it.type === "scale" ? B("Scale", "#cae7ff", "#2f76f4") : B("Open", "#f0f2f7", "#333d4a")],
+        onEdit: stop(() => this.open("q", i, Object.assign({}, it))),
+        onDelete: stop(() => { if (!busy && confirm(`Delete "${it.text}"?`)) saveItems(cur.items.filter((_, j) => j !== i), "Question deleted"); }) }));
+      if (view === "p-notfilled") { const done = new Set(cur.submitted.map(s => s.userId));
+        rows = scoped(leader).filter(m => !done.has(m.userId)).map(m => ({ key: m.userId, o: m, match: [m.name, m.group, m.email].join(" "), keep: true, hasActions: false, cells: [P(m.name), T(m.group), M(m.email)] })); }
+      if (view === "p-submitted") rows = cur.submitted.filter(s => inScope(s.userId)).map(s => { const m = memberMap[s.userId] || { name: "User " + s.userId, group: "", email: "" };
+        return { key: s.userId, o: Object.assign({}, m, { at: s.at }), match: [m.name, m.group].join(" "), keep: true, hasActions: false, onRow: () => this.open("resp", -1, { userId: s.userId, at: s.at }),
+          cells: [P(m.name), T(m.group), M(fmtDt(s.at)), { isBadge: true, text: "View answers ›", badgeStyle: { alignSelf: "flex-end", fontSize: 13, fontWeight: 600, color: "#2f76f4" } }] }; });
+      rows = rows.filter(r => r.keep && (!q || r.match.toLowerCase().includes(q)));
+      if (S.sort && S.sort.view === view) {
+        const k = S.sort.key, dir = S.sort.dir;
+        rows.sort((a, b) => { const x = a.o[k], y = b.o[k]; return (typeof x === "number" ? x - y : String(x || "").localeCompare(String(y || ""))) * dir; });
+      }
+      const heads = cfg.heads.map(([label, key]) => {
+        const active = S.sort && S.sort.view === view && S.sort.key === key;
+        return { label, sortable: !!key,
+          onClick: () => { if (!key) return; const dir = active ? (S.sort.dir === 1 ? -1 : 0) : 1; this.setState({ sort: dir ? { view, key, dir } : null }); },
+          upFill: active && S.sort.dir === 1 ? "#2f76f4" : "#8b98ac", downFill: active && S.sort.dir === -1 ? "#2f76f4" : "#8b98ac",
+          style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 700, letterSpacing: ".02em", color: "#111820", textAlign: "left", cursor: key ? "pointer" : "default", whiteSpace: "nowrap" } };
+      });
+      const emptyBy = {
+        ann: ["No announcements yet", "Create one to show it on members' Home screen."], events: ["No events", "Add an event so members can plan ahead."], res: ["No resources yet", "Add a link members can open from Resources."],
+        pulses: ["No pulse checks yet", ro ? "An admin can create one." : "Create one, then add its questions."], "p-questions": ["No questions yet", "Add questions for this pulse check."],
+        "p-notfilled": ["Everyone has filled it in", "All members have submitted this pulse check."], "p-submitted": ["No responses yet", "Members who submit will appear here."],
+      };
+      const nouns = { ann: ["announcement", "announcements"], events: ["event", "events"], res: ["resource", "resources"], pulses: ["pulse check", "pulse checks"], "p-questions": ["question", "questions"], "p-notfilled": ["member not filled in", "members not filled in"], "p-submitted": ["response", "responses"] }[view] || ["", ""];
+
+      const strip = cur ? { canEdit: !ro,
+        edit: () => this.open("pulse", cur.id, { windowTitle: cur.windowTitle, openDate: cur.openDate || "", openTime: cur.openTime || "08:00", closeDate: cur.closeDate, closeTime: cur.closeTime || "21:00" }),
+        stats: [
+          { label: "Status", value: cs.scheduled ? "Scheduled" : cs.open ? "Open" : "Closed", valueStyle: { fontSize: 15, fontWeight: 600, color: cs.scheduled ? "#2f76f4" : cs.open ? "#15803d" : "#5b6b86" } },
+          { label: "Opens", value: fmtDt(cur.openMs), valueStyle: { fontSize: 15, color: "#333d4a" } },
+          { label: "Closes", value: fmtDt(cur.closeMs), valueStyle: { fontSize: 15, color: "#333d4a" } },
+          { label: "Submitted", value: `${cs.done} of ${cs.total} ${leader ? "in your group" : "members"}`, valueStyle: { fontSize: 15, color: "#333d4a" } },
+          { label: "Not filled in", value: cs.left ? `${cs.left} ${cs.left === 1 ? "member" : "members"}` : "None", valueStyle: { fontSize: 15, fontWeight: 600, color: cs.left ? "#d94545" : "#15803d" } },
+          { label: "Est. time", value: `~${Math.max(1, Math.ceil(cur.items.length * 30 / 60))} min`, valueStyle: { fontSize: 15, color: "#333d4a" } },
+        ] } : null;
+
+      // Verse / module forms
+      const vd = S.verseDraft || D0.verse, md = S.moduleDraft || D0.module;
+      const vDirty = !!S.verseDraft && JSON.stringify(S.verseDraft) !== JSON.stringify(D0.verse);
+      const mDirty = !!S.moduleDraft && JSON.stringify(S.moduleDraft) !== JSON.stringify(D0.module);
+      const fs = (key, base, fields) => Object.fromEntries(fields.map(f => [f, e => { const val = e.target.value; this.setState(s => ({ [key]: Object.assign({}, s[key] || s.data[base], { [f]: val }) })); }]));
+      const isV = sec === "verse", dirty = isV ? vDirty : mDirty;
+      const form = { dirty, saveStyle: primaryBtn(!dirty || busy),
+        save: () => { if (!dirty || busy) return; isV ? this.mutate("adminSaveVerse", [vd], "Verse of the month saved", () => ({ verseDraft: null })) : this.mutate("adminSaveModule", [md], "Current module saved", () => ({ moduleDraft: null })); },
+        discard: () => this.setState(isV ? { verseDraft: null } : { moduleDraft: null }) };
+      const mOn = !!md.enabled;
+      const vSet = fs("verseDraft", "verse", ["label", "text", "reference"]), mSet = fs("moduleDraft", "module", ["theme", "module", "note"]);
+
+      // Drawer
+      const Dr = S.drawer, d = Dr ? Dr.draft : {};
+      const setD = patch => this.setState(s => ({ drawer: Object.assign({}, s.drawer, { draft: Object.assign({}, s.drawer.draft, patch) }) }));
+      const readImg = f => {
+        if (!f || !/^image\//.test(f.type)) return;
+        const r = new FileReader();
+        r.onload = () => {
+          const url = r.result;
+          if (f.size <= 1.5e6 || /gif|svg/.test(f.type)) return setD({ imgUrl: url });
+          // Large photos are scaled down before upload; 1600px is plenty for the app card.
+          const im = new Image();
+          im.onload = () => { const k = Math.min(1, 1600 / Math.max(im.width, im.height)); const c = document.createElement("canvas"); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); setD({ imgUrl: c.toDataURL("image/jpeg", .85) }); };
+          im.onerror = () => setD({ imgUrl: url });
+          im.src = url;
+        };
+        r.readAsDataURL(f);
+      };
+      const set = {}; ["title", "tag", "detail", "fileUrl", "group", "text", "windowTitle", "openDate", "openTime", "closeDate", "closeTime", "date", "start", "end", "location", "link"].forEach(f => { set[f] = e => setD({ [f]: e.target.value }); });
+      const kind = Dr && Dr.kind, editing = Dr && (kind === "pulse" ? Dr.idx != null : Dr.idx >= 0);
+      const windowBad = kind === "pulse" && !!(d.openDate && d.closeDate) && `${d.openDate}T${d.openTime || "00:00"}` >= `${d.closeDate}T${d.closeTime || "23:59"}`;
+      const invalid = !Dr || kind === "resp" ? true : kind === "ann" ? !d.title.trim() : kind === "ev" ? !d.title.trim() || !d.date || !d.group : kind === "res" ? !d.title.trim() || !d.fileUrl.trim() || !String(d.group || "").trim() : kind === "q" ? !d.text.trim() : !d.windowTitle.trim() || !d.openDate || !d.closeDate || windowBad;
+      const saveDrawer = () => {
+        if (invalid || busy) return;
+        const close = () => ({ drawer: null });
+        if (kind === "ann" || kind === "res" || kind === "ev") {
+          this.mutate("adminSaveItem", [kind, editing ? Dr.idx : -1, Dr.expect || "", d], ({ ann: "Announcement ", res: "Resource ", ev: "Event " })[kind] + (editing ? "updated" : "published"), close);
+        } else if (kind === "q") {
+          const it = { text: d.text.trim().replace(/\|/g, "/"), type: d.type }, items = cur.items.slice();
+          if (editing) items[Dr.idx] = it; else items.push(it);
+          saveItems(items, editing ? "Question updated" : "Question added", close);
+        } else if (editing) {
+          this.mutate("adminSavePulse", [Dr.idx, d], "Pulse check updated", close);
+        } else {
+          this.mutate("adminSavePulse", [null, d], "Pulse check created", r => ({ drawer: null, pulseId: r.pulseId, sub: "questions", query: "", sort: null }));
+        }
+      };
+      const titles = { resp: [Dr && Dr.draft.userId ? (memberMap[Dr.draft.userId] || {}).name || "" : "", ""], ann: ["New announcement", "Edit announcement"], res: ["New resource", "Edit resource"], ev: ["New event", "Edit event"], q: ["New question", "Edit question"], pulse: ["New pulse check", "Pulse check settings"] };
+      const drawer = { title: Dr ? titles[kind][editing ? 1 : 0] : "", close: () => this.setState({ drawer: null, grpOpen: false }),
+        saveLabel: busy ? "Saving…" : editing ? "Save changes" : kind === "q" ? "Add question" : kind === "pulse" ? "Create" : "Publish", saveStyle: primaryBtn(invalid || busy) };
+      const newBy = {
+        ann: ["New announcement", () => this.open("ann", -1, Object.assign({}, empty.ann, { tag: S.sub !== "all" ? S.sub : "" }))],
+        res: ["New resource", () => this.open("res", -1, Object.assign({}, empty.res))],
+        events: ["New event", () => this.open("ev", -1, Object.assign({}, empty.ev, { group: S.sub !== "all" ? S.sub : "" }))],
+        pulses: ["New pulse check", () => this.open("pulse", null, { windowTitle: "", openDate: todayYmd(NOW, tz), openTime: "08:00", closeDate: "", closeTime: "21:00" })],
+        "p-questions": ["New question", () => this.open("q", -1, Object.assign({}, empty.q))],
+      };
+
+      // Overview board
+      const ovG = S.ovGroup || "all";
+      const board = (() => {
+        if (view !== "p-overview") return null;
+        const nameOf = uid => (memberMap[uid] || {}).name || "";
+        const filters = [["all", "All groups"], ...(leader ? [leader] : groups).map(g => [g, g])].map(([v, l]) => ({ label: l, onClick: () => this.setState({ ovGroup: v }), style: Object.assign(chip(ovG === v), { height: 34 }) }));
+        // A group leader's "All groups" view comes pre-aggregated from the server.
+        const useAgg = !!(leader && ovG === "all" && cur.agg);
+        let subs = [];
+        if (!useAgg) { const ids = new Set(scoped(ovG).map(m => m.userId)); subs = cur.submitted.filter(s => ids.has(s.userId)); }
+        const nResp = useAgg ? cur.agg.n : subs.length;
+        const questions = nResp ? cur.items.map((it, qi) => {
+          if (it.type === "scale") {
+            const cnt = useAgg ? cur.agg.scale[qi].slice() : [0, 0, 0, 0, 0];
+            if (!useAgg) subs.forEach(s => { const a = s.answers[qi]; if (a >= 1 && a <= 5) cnt[a - 1]++; });
+            const n = cnt.reduce((x, y) => x + y, 0), avg = n ? cnt.reduce((a, c, i) => a + c * (i + 1), 0) / n : 0;
+            return { num: qi + 1, text: it.text, isScale: true, stat: n ? avg.toFixed(1) : "—", statSub: "avg of 5",
+              segs: cnt.map((c, i) => { const pct = n ? c / n * 100 : 0; return { label: pct >= 8 ? Math.round(pct) + "%" : "", title: `${SCL[i]}: ${c} (${Math.round(pct)}%)`,
+                style: { width: pct + "%", background: SC[i], color: SCT[i], fontSize: 12, fontWeight: 600, display: pct ? "flex" : "none", alignItems: "center", justifyContent: "center", overflow: "hidden", whiteSpace: "nowrap" } }; }) };
+          }
+          const answers = useAgg
+            ? cur.agg.open[qi].map(a => ({ text: a.text, who: a.own ? nameOf(a.userId) || a.group : a.group }))
+            : subs.map(s => ({ text: s.answers[qi] || "", who: !leader || inScope(s.userId) ? nameOf(s.userId) : ((memberMap[s.userId] || {}).group || "") })).filter(a => a.text);
+          return { num: qi + 1, text: it.text, isScale: false, stat: String(answers.length), statSub: answers.length === 1 ? "answer" : "answers", answers };
+        }) : [];
+        return { filters, questions, countText: `${nResp} ${nResp === 1 ? "response" : "responses"}`, empty: !questions.length,
+          emptyTitle: cur.items.length ? "No responses yet" : "No questions yet", emptySub: cur.items.length ? "Results appear as members submit." : (ro ? "An admin can add questions." : "Add questions to see results here.") };
+      })();
+      const resp = (() => {
+        if (!Dr || Dr.kind !== "resp" || !cur) return null;
+        const m = memberMap[Dr.draft.userId] || {}, s = cur.submitted.find(x => x.userId === Dr.draft.userId) || { answers: [] };
+        return { group: m.group, at: "Submitted " + fmtDt(Dr.draft.at), items: cur.items.map((it, qi) => {
+          const a = s.answers[qi];
+          return { num: qi + 1, q: it.text, isScale: it.type === "scale", a: a || "No answer",
+            textStyle: { fontSize: 15, lineHeight: 1.5, color: a ? "#333d4a" : "#8b98ac", fontStyle: a ? "normal" : "italic", whiteSpace: "pre-wrap" },
+            dots: [1, 2, 3, 4, 5].map(n => ({ n, style: { width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 600, background: n === a ? SC[n - 1] : "#f4f6f9", color: n === a ? SCT[n - 1] : "#8b98ac" } })) }; }) };
+      })();
+      const grp = (() => {
+        const gq = (S.grpQuery || "").toLowerCase(), items = ["All groups", "Mentors only", ...groups].filter(g => g.toLowerCase().includes(gq));
+        return { items, hint: d.group === "All groups" ? "Every member will see the event." : d.group === "Mentors only" ? "Only mentors will see the event." : "Only members of this group will see the event." };
+      })();
+      const titleBy = { ann: "Announcements", events: "Events", res: "Resources", pulse: "Pulse Check", verse: "Verse of the Month", module: "Current Module" };
+      const swTrack = { width: 46, height: 28, borderRadius: 100, background: mOn ? "#2f76f4" : "#d5dde7", position: "relative", flexShrink: 0 };
+      const swKnob = { position: "absolute", top: 3, left: mOn ? 21 : 3, width: 22, height: 22, borderRadius: "50%", background: "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,.2)", transition: "left .15s" };
+      const roleLabel = senior ? "Leader · All groups" : leader ? "Leader · " + leader : "Admin";
+      const isTable = sec !== "verse" && sec !== "module" && view !== "p-overview";
+      const showNew = (!ro || sec !== "pulse") && !!newBy[view];
+      const page = { title: cur ? cur.windowTitle : titleBy[sec], crumb: cur ? "Pulse Check" : "", searchPh: view === "p-notfilled" || view === "p-submitted" ? "Search members" : `Search ${nouns[1]}` };
+      const qNote = kind === "q" && cur && cur.responseCount > 0;
+
+      return html`
+      <div style="min-height:100vh;display:flex;">
+        <div style=${{ width: S.sideOpen ? 248 : 76, flexShrink: 0, borderRight: "1px solid #e4ebf2", display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", boxSizing: "border-box", background: "#ffffff", transition: "width .15s" }}>
+          <div style="display:flex;align-items:center;gap:10px;padding:20px 14px 28px;">
+            <div style="width:38px;height:38px;border-radius:11px;background:#2f76f4;color:#ffffff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">SG</div>
+            ${S.sideOpen && html`<div style="display:flex;flex-direction:column;min-width:0;">
+              <div style="font-size:15px;font-weight:700;color:#1c3249;white-space:nowrap;">SCU Small Group</div>
+              <div style="font-size:12px;color:#8b98ac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${roleLabel}</div>
+            </div>`}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;padding:0 12px;flex:1;overflow-y:auto;">
+            ${nav.map(n => html`<button key=${n.id} onClick=${n.onClick} title=${n.label} style=${n.style}>${NAV_ICONS[n.id]}${S.sideOpen && html`<span>${n.label}</span>`}</button>`)}
+          </div>
+          <div style="border-top:1px solid #e4ebf2;padding:14px 12px 18px;display:flex;flex-direction:column;gap:10px;">
+            ${S.sideOpen && html`
+              ${me.realRole === "admin" && html`<div style="display:flex;flex-direction:column;gap:6px;padding:0 4px;">
+                <div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8b98ac;">Viewing as</div>
+                <select value=${S.viewAs} disabled=${busy} onChange=${e => this.changeViewAs(e.target.value)} style="height:38px;border:1px solid #e4ebf2;border-radius:10px;padding:0 10px;font-size:13px;font-weight:600;color:#333d4a;background:#ffffff;">
+                  <option value="admin">Admin</option>
+                  <option value="leader_all">Leader — All groups</option>
+                  ${D0.groups.map(g => html`<option key=${g.id} value=${g.id}>Group leader — ${g.name}</option>`)}
+                </select>
+              </div>`}
+              <div style="display:flex;align-items:center;gap:10px;padding:0 4px;">
+                <div style="width:32px;height:32px;border-radius:50%;background:#cae7ff;color:#2f76f4;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${me.initials}</div>
+                <div style="font-size:13px;color:#5b6b86;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title=${me.email}>${me.email}</div>
+              </div>`}
+            <div style=${{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexDirection: S.sideOpen ? "row" : "column" }}>
+              <button onClick=${() => this.signOut()} title="Sign out" style="height:38px;padding:0 12px;border-radius:100px;border:1px solid #e4ebf2;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#5b6b86;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"></path><path d="M10 17l-5-5 5-5"></path><path d="M5 12h11"></path></svg>
+                ${S.sideOpen && html`<span>Sign out</span>`}
+              </button>
+              <button onClick=${() => this.setState({ sideOpen: !S.sideOpen })} aria-label=${S.sideOpen ? "Collapse sidebar" : "Expand sidebar"} style="width:38px;height:38px;border-radius:50%;border:1px solid #e4ebf2;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#333d4a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{ transform: S.sideOpen ? "none" : "rotate(180deg)" }}><path d="M15 5l-7 7 7 7"></path></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="main">
+          <div style="max-width:1340px;display:flex;flex-direction:column;">
+            <div style="display:flex;align-items:center;gap:14px;padding:4px 0 22px;min-width:0;">
+              ${cur && html`<button class="hov-soft" onClick=${() => this.setState({ pulseId: null, sub: "all", query: "", sort: null })} aria-label="Back to pulse checks" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#111820" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+              </button>`}
+              <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+                ${page.crumb && html`<div style="font-size:13px;color:#8b98ac;">${page.crumb}</div>`}
+                <div style="font-size:32px;font-weight:600;letter-spacing:-.5px;color:#111820;">${page.title}</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:4px;border-bottom:1px solid #e4ebf2;overflow-x:auto;overflow-y:hidden;">
+              ${subtabs.map(t => html`<button key=${t.label} onClick=${t.onClick} style=${t.style}>${t.label}</button>`)}
+            </div>
+
+            ${strip && html`
+              <div style="margin-top:20px;border:1px solid #e4ebf2;border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
+                ${strip.stats.map(s => html`<div key=${s.label} style="display:flex;flex-direction:column;gap:3px;min-width:max-content;">
+                  <div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8b98ac;white-space:nowrap;">${s.label}</div>
+                  <div style=${Object.assign({ whiteSpace: "nowrap" }, s.valueStyle)}>${s.value}</div>
+                </div>`)}
+                <div style="flex:1;"></div>
+                ${strip.canEdit && html`<button onClick=${strip.edit} style="height:38px;padding:0 16px;border-radius:8px;border:1px solid #e4ebf2;font-size:14px;font-weight:600;color:#2f76f4;">Edit settings</button>`}
+              </div>`}
+
+            ${board && html`
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 0 16px;">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:200px;">
+                  ${board.filters.map(f => html`<button key=${f.label} onClick=${f.onClick} style=${f.style}>${f.label}</button>`)}
+                </div>
+                <div style="font-size:14px;color:#8b98ac;">${board.countText}</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-bottom:16px;">
+                ${SCL.map((l, i) => html`<div key=${l} style="display:flex;align-items:center;gap:6px;font-size:13px;color:#5b6b86;"><span style=${{ width: 12, height: 12, borderRadius: 3, background: SC[i], display: "inline-block" }}></span><span>${l}</span></div>`)}
+              </div>
+              <div style="display:flex;flex-direction:column;gap:12px;">
+                ${board.questions.map(bq => html`
+                  <div key=${bq.num} style="border:1px solid #e4ebf2;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;">
+                    <div style="display:flex;align-items:flex-start;gap:14px;">
+                      <div style="font-size:14px;font-weight:600;color:#8b98ac;width:24px;flex-shrink:0;">${bq.num}</div>
+                      <div style="flex:1;min-width:0;font-size:15px;font-weight:600;color:#111820;line-height:1.4;text-wrap:pretty;">${bq.text}</div>
+                      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;">
+                        <div style="font-size:15px;font-weight:600;color:#111820;">${bq.stat}</div>
+                        <div style="font-size:12px;color:#8b98ac;white-space:nowrap;">${bq.statSub}</div>
+                      </div>
+                    </div>
+                    ${bq.isScale ? html`
+                      <div style="display:flex;height:34px;border-radius:8px;overflow:hidden;background:#f4f6f9;margin-left:38px;">
+                        ${bq.segs.map((sg, i) => html`<div key=${i} title=${sg.title} style=${sg.style}>${sg.label}</div>`)}
+                      </div>` : html`
+                      <div style="display:flex;flex-direction:column;gap:8px;margin-left:38px;">
+                        ${bq.answers.map((an, i) => html`<div key=${i} style="display:flex;gap:12px;align-items:baseline;padding:10px 12px;background:#f9fbfd;border-radius:8px;">
+                          <div style="flex:1;min-width:0;font-size:14px;color:#333d4a;line-height:1.45;white-space:pre-wrap;">${an.text}</div>
+                          <div style="font-size:12px;color:#8b98ac;white-space:nowrap;">${an.who}</div>
+                        </div>`)}
+                      </div>`}
+                  </div>`)}
+                ${board.empty && html`<div style="padding:70px 20px;text-align:center;border:1px solid #e4ebf2;border-radius:10px;display:flex;flex-direction:column;gap:6px;">
+                  <div style="font-size:16px;font-weight:600;color:#333d4a;">${board.emptyTitle}</div>
+                  <div style="font-size:14px;color:#8b98ac;">${board.emptySub}</div>
+                </div>`}
+              </div>`}
+
+            ${isTable && html`
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 0 16px;">
+                <div style="font-size:14px;color:#8b98ac;flex:1;min-width:120px;">${rows.length} ${rows.length === 1 ? nouns[0] : nouns[1]}</div>
+                <div style="display:flex;align-items:center;gap:8px;height:40px;width:340px;max-width:100%;border:1px solid #e4ebf2;border-radius:10px;padding:0 12px;box-sizing:border-box;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5b6b86" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+                  <input value=${S.query} onInput=${e => this.setState({ query: e.target.value })} placeholder=${page.searchPh} style="flex:1;min-width:0;border:none;font-size:14px;color:#111820;background:transparent;outline:none;" />
+                </div>
+                ${showNew && html`<button class="hov-primary" onClick=${newBy[view][1]} style="height:40px;padding:0 16px;border-radius:10px;background:#2f76f4;color:#ffffff;font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  <span>${newBy[view][0]}</span>
+                </button>`}
+              </div>
+              <div style="border:1px solid #e4ebf2;border-radius:10px;overflow-x:auto;overflow-y:hidden;">
+                <div style="min-width:760px;">
+                  <div style=${{ display: "grid", gridTemplateColumns: cfg.grid, gap: 20, alignItems: "center", padding: "0 16px", height: 58, borderBottom: "1px solid #e4ebf2" }}>
+                    ${heads.map((h, i) => html`<button key=${i} onClick=${h.onClick} style=${h.style}>
+                      <span>${h.label}</span>
+                      ${h.sortable && html`<svg width="10" height="16" viewBox="0 0 10 16"><path d="M5 1 9 6H1z" fill=${h.upFill}></path><path d="M5 15 1 10h8z" fill=${h.downFill}></path></svg>`}
+                    </button>`)}
+                  </div>
+                  ${rows.map((r, n) => html`
+                    <div key=${r.key} class=${r.onRow ? "row-click" : ""} onClick=${r.onRow} style=${{ display: "grid", gridTemplateColumns: cfg.grid, gap: 20, alignItems: "center", padding: "14px 16px", borderTop: n === 0 ? "none" : "1px solid #f0f2f7", cursor: r.onRow ? "pointer" : "default" }}>
+                      ${r.cells.map((c, i) => html`<div key=${i} style="min-width:0;display:flex;flex-direction:column;gap:3px;">
+                        ${c.isPrimary && html`<div style="font-size:14px;font-weight:600;color:#111820;line-height:1.35;text-wrap:pretty;">${c.text}</div>
+                          ${c.sub && html`<div style="font-size:13px;color:#8b98ac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.sub}</div>`}`}
+                        ${c.isText && html`<div style="font-size:14px;color:#333d4a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.text}</div>`}
+                        ${c.isMuted && html`<div style="font-size:14px;color:#8b98ac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.text}</div>`}
+                        ${c.isBadge && html`<span style=${c.badgeStyle}>${c.text}</span>`}
+                        ${c.isLink && html`<a href=${c.href} target="_blank" rel="noopener" onClick=${e => e.stopPropagation()} style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.text}</a>`}
+                        ${c.isProgress && html`<div style="display:flex;align-items:center;gap:10px;">
+                          <div style="flex:1;max-width:80px;height:6px;border-radius:100px;background:#e4ebf2;overflow:hidden;"><div style=${c.barStyle}></div></div>
+                          <span style="font-size:14px;color:#333d4a;white-space:nowrap;">${c.text}</span>
+                        </div>`}
+                      </div>`)}
+                      ${r.hasActions && html`<div style="display:flex;justify-content:flex-end;gap:2px;">
+                        <button class="hov-soft" onClick=${r.onEdit} style="height:32px;padding:0 10px;border-radius:8px;font-size:13px;font-weight:600;color:#2f76f4;">${r.editLabel}</button>
+                        <button class="hov-danger" onClick=${r.onDelete} style="height:32px;padding:0 10px;border-radius:8px;font-size:13px;font-weight:600;color:#d94545;">Delete</button>
+                      </div>`}
+                    </div>`)}
+                  ${rows.length === 0 && html`<div style="padding:90px 20px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;">
+                    <div style="width:56px;height:56px;border-radius:16px;background:#f4f6f9;display:flex;align-items:center;justify-content:center;">
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#8b98ac" stroke-width="1.8" stroke-linejoin="round"><path d="M3 13h5l1.5 2.5h5L16 13h5"></path><path d="M5 5h14l2 8v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z"></path></svg>
+                    </div>
+                    <div style="font-size:16px;font-weight:600;color:#333d4a;">${q ? "No matches" : (emptyBy[view] || ["", ""])[0]}</div>
+                    <div style="font-size:14px;color:#8b98ac;">${q ? "Try a different search." : (emptyBy[view] || ["", ""])[1]}</div>
+                  </div>`}
+                </div>
+              </div>`}
+
+            ${(sec === "verse" || sec === "module") && html`
+              <div style="display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start;padding-top:28px;">
+                <div style="flex:1 1 420px;max-width:620px;display:flex;flex-direction:column;gap:20px;">
+                  ${isV ? html`
+                    <${Field} label="Label"><input value=${vd.label} onInput=${vSet.label} placeholder="Verse of the month" style=${INPUT} /><//>
+                    <${Field} label="Verse"><textarea value=${vd.text} onInput=${vSet.text} rows="5" placeholder="Paste the verse text, without quotation marks" style=${AREA}></textarea><//>
+                    <${Field} label="Reference"><input value=${vd.reference} onInput=${vSet.reference} placeholder="e.g. Ephesians 2:10" style=${INPUT} /><//>
+                  ` : html`
+                    <button onClick=${() => this.setState({ moduleDraft: Object.assign({}, md, { enabled: !mOn }) })} style="display:flex;align-items:center;gap:14px;text-align:left;padding:14px 16px;border-radius:10px;border:1.5px solid #e4ebf2;">
+                      <div style="flex:1;display:flex;flex-direction:column;gap:2px;">
+                        <div style="font-size:15px;font-weight:600;color:#333d4a;">Show on Home</div>
+                        <div style="font-size:13px;color:#8b98ac;">Displays the "Now studying" card at the top of members' Home screen.</div>
+                      </div>
+                      <div style=${swTrack}><div style=${swKnob}></div></div>
+                    </button>
+                    <${Field} label="Theme"><input value=${md.theme} onInput=${mSet.theme} placeholder="e.g. Identity in Christ" style=${INPUT} /><//>
+                    <${Field} label="Module"><input value=${md.module} onInput=${mSet.module} placeholder="e.g. Module 3 · Week 2" style=${INPUT} /><//>
+                    <${Field} label="Note"><textarea value=${md.note} onInput=${mSet.note} rows="3" placeholder="Optional — a short line for this week" style=${AREA}></textarea><//>
+                  `}
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px;">
+                    <button onClick=${form.save} disabled=${!form.dirty || busy} style=${form.saveStyle}>${busy && form.dirty ? "Saving…" : "Save changes"}</button>
+                    ${form.dirty && html`
+                      <button onClick=${form.discard} disabled=${busy} style="height:44px;padding:0 18px;border-radius:10px;border:1px solid #e4ebf2;font-size:14px;font-weight:600;color:#333d4a;">Discard</button>
+                      <div style="font-size:13px;color:#b7791f;">Unsaved changes</div>`}
+                  </div>
+                </div>
+                <div style="flex:0 1 380px;min-width:280px;display:flex;flex-direction:column;gap:12px;">
+                  <div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8b98ac;">Preview on Home</div>
+                  <div style="background:#f4f6f9;border-radius:16px;padding:20px;">
+                    ${isV ? html`
+                      <div style="border-radius:16px;background:#ffffff;padding:16px 18px;box-shadow:0 4px 16px -12px rgba(5,28,44,.4);display:flex;gap:14px;align-items:flex-start;">
+                        <div style="width:38px;height:38px;border-radius:11px;background:#eafaff;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#06b6d4;">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path><path d="M6 6h10M6 10h10"></path></svg>
+                        </div>
+                        <div style="min-width:0;">
+                          <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#06b6d4;">${vd.label || "Verse of the month"}</div>
+                          <div style="font-size:15px;color:#333d4a;line-height:1.5;margin-top:5px;text-wrap:pretty;">${vd.text ? `“${vd.text}”` : "Verse text"}</div>
+                          <div style="font-size:12px;font-weight:600;color:#2f76f4;margin-top:6px;">${vd.reference || "Reference"}</div>
+                        </div>
+                      </div>` : mOn ? html`
+                      <div style="position:relative;overflow:hidden;border-radius:16px;background:#2f76f4;color:#ffffff;padding:16px;">
+                        <div style="position:absolute;right:-30px;top:-30px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.08);"></div>
+                        <div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#c3d0ff;">Now studying</div>
+                        <div style="font-size:22px;font-weight:700;line-height:1.1;letter-spacing:-.4px;margin-top:4px;">${md.theme || "Theme"}</div>
+                        <div style="font-size:13px;font-weight:600;color:#dbe4ff;margin-top:4px;">${md.module || "Module"}</div>
+                        ${md.note && html`<div style="font-size:13px;color:#dbe4ff;margin-top:10px;line-height:1.4;">${md.note}</div>`}
+                        <div style="font-size:13px;font-weight:700;margin-top:12px;">View details ›</div>
+                      </div>` : html`
+                      <div style="padding:28px 16px;text-align:center;font-size:14px;color:#8b98ac;border:1.5px dashed #d5dde7;border-radius:16px;">Hidden — members won't see this card.</div>`}
+                  </div>
+                </div>
+              </div>`}
+          </div>
+        </div>
+      </div>
+
+      ${Dr && html`
+        <div onClick=${drawer.close} style="position:fixed;inset:0;background:rgba(17,24,32,.32);"></div>
+        <div style="position:fixed;top:0;right:0;bottom:0;width:480px;max-width:100vw;background:#ffffff;box-shadow:-20px 0 50px -20px rgba(5,28,44,.35);display:flex;flex-direction:column;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:22px 24px;border-bottom:1px solid #e4ebf2;">
+            <div style="font-size:20px;font-weight:600;color:#111820;">${drawer.title}</div>
+            <button class="hov-soft" onClick=${drawer.close} aria-label="Close" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333d4a" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+            </button>
+          </div>
+          <div style="flex:1;overflow-y:auto;overflow-x:hidden;padding:24px;display:flex;flex-direction:column;gap:20px;">
+            ${kind === "ann" && html`
+              <${Field} label="Title"><input value=${d.title} onInput=${set.title} placeholder="e.g. Combined gathering this Saturday" style=${INPUT} /><//>
+              <${Field} label="Tag">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  ${["Event", "Update", "Prayer", "Reminder"].map(t => html`<button key=${t} onClick=${() => setD({ tag: t })} style=${chip(d.tag === t)}>${t}</button>`)}
+                </div>
+                <input value=${d.tag} onInput=${set.tag} placeholder="Or type a custom tag" style=${INPUT} />
+              <//>
+              ${d.time && html`<div style="display:flex;justify-content:space-between;gap:8px;font-size:14px;"><div style="color:#5b6b86;">Created</div><div style="color:#333d4a;font-weight:600;">${d.time}</div></div>`}
+              <${Field} label="Image">
+                ${d.imgUrl ? html`<div style="display:flex;flex-direction:column;gap:10px;">
+                  <div style=${{ width: 200, aspectRatio: "16/10", borderRadius: 10, background: `#e6edf4 url("${String(d.imgUrl).replace(/"/g, "%22")}") center/cover no-repeat` }}></div>
+                  <div style="display:flex;gap:8px;">
+                    <label style="height:36px;padding:0 14px;border-radius:100px;background:#f4f6f9;color:#2f76f4;font-size:13px;font-weight:600;display:flex;align-items:center;cursor:pointer;">Replace<input type="file" accept="image/*" onChange=${e => { readImg(e.target.files && e.target.files[0]); e.target.value = ""; }} style="display:none;" /></label>
+                    <button onClick=${() => setD({ imgUrl: "" })} style="height:36px;padding:0 14px;border-radius:100px;background:#f4f6f9;color:#5b6b86;font-size:13px;font-weight:600;">Remove</button>
+                  </div>
+                </div>` : html`
+                <label onDragOver=${e => { e.preventDefault(); if (!this.state.imgDrag) this.setState({ imgDrag: true }); }} onDragLeave=${() => this.setState({ imgDrag: false })}
+                  onDrop=${e => { e.preventDefault(); this.setState({ imgDrag: false }); readImg(e.dataTransfer.files && e.dataTransfer.files[0]); }}
+                  style=${{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, minHeight: 140, padding: 20, textAlign: "center", borderRadius: 12, cursor: "pointer", border: "1.5px dashed " + (S.imgDrag ? "#2f76f4" : "#c9d5e2"), background: S.imgDrag ? "#eef5ff" : "#f9fbfd", boxSizing: "border-box" }}>
+                  <div style="font-size:15px;font-weight:600;color:#111820;">Drag & drop an image</div>
+                  <div style="font-size:13px;color:#8b98ac;">or <span style="color:#2f76f4;font-weight:600;">browse files</span> · 16:10 works best</div>
+                  <input type="file" accept="image/*" onChange=${e => { readImg(e.target.files && e.target.files[0]); e.target.value = ""; }} style="display:none;" />
+                </label>`}
+              <//>
+              <${Field} label="Details"><textarea value=${d.detail} onInput=${set.detail} rows="7" placeholder="Full text shown when members open the announcement" style=${AREA}></textarea><//>
+            `}
+
+            ${kind === "ev" && html`
+              <${Field} label="Event name"><input value=${d.title} onInput=${set.title} placeholder="e.g. Group dinner" style=${INPUT} /><//>
+              <${Field} label="Group">
+                <div style="position:relative;">
+                  <button onClick=${() => this.setState(s => ({ grpOpen: !s.grpOpen, grpQuery: "" }))} style="width:100%;height:46px;border:1.5px solid #e4ebf2;border-radius:10px;padding:0 14px;font-size:15px;background:#ffffff;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;">
+                    <span style=${{ color: d.group ? "#111820" : "#8b98ac" }}>${d.group || "Select a group"}</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5b6b86" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+                  </button>
+                  ${S.grpOpen && html`<div style="position:absolute;left:0;right:0;top:52px;z-index:5;background:#ffffff;border:1.5px solid #e4ebf2;border-radius:12px;box-shadow:0 12px 32px rgba(17,24,32,0.12);padding:8px;display:flex;flex-direction:column;gap:6px;">
+                    <input ref=${el => { if (el && !this._grpFocused) { this._grpFocused = true; el.focus(); } else if (!el) this._grpFocused = false; }} value=${S.grpQuery} onInput=${e => this.setState({ grpQuery: e.target.value })} placeholder="Search groups" style="height:40px;border:1.5px solid #e4ebf2;border-radius:8px;padding:0 12px;font-size:14px;color:#111820;" />
+                    <div style="display:flex;flex-direction:column;max-height:220px;overflow-y:auto;">
+                      ${grp.items.map(g => html`<button key=${g} onClick=${() => { setD({ group: g }); this.setState({ grpOpen: false, grpQuery: "" }); }} style=${{ height: 40, padding: "0 12px", borderRadius: 8, fontSize: 14, textAlign: "left", flexShrink: 0, fontWeight: d.group === g ? 600 : 500, background: d.group === g ? "#eef5ff" : "transparent", color: d.group === g ? "#2f76f4" : "#333d4a" }}>${g}</button>`)}
+                      ${!grp.items.length && html`<div style="padding:10px 12px;font-size:14px;color:#8b98ac;">No groups match.</div>`}
+                    </div>
+                  </div>`}
+                </div>
+                <div style="font-size:13px;color:#8b98ac;">${grp.hint}</div>
+              <//>
+              <${Field} label="Date"><input type="date" value=${d.date} onInput=${set.date} style=${INPUT} /><//>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <${Field} label="Starts" style=${{ flex: "1 1 140px" }}><input type="time" value=${d.start} onInput=${set.start} style=${INPUT} /><//>
+                <${Field} label="Ends" style=${{ flex: "1 1 140px" }}><input type="time" value=${d.end} onInput=${set.end} style=${INPUT} /><//>
+              </div>
+              <${Field} label="Location"><input value=${d.location} onInput=${set.location} placeholder="e.g. Main Hall, 3rd floor" style=${INPUT} /><//>
+              <${Field} label="Details"><textarea value=${d.detail} onInput=${set.detail} rows="12" placeholder="Full description — agenda, what to expect, what to bring, who to contact" style=${AREA}></textarea><//>
+              <${Field} label="Registration link"><input value=${d.link} onInput=${set.link} placeholder="Optional — e.g. a Google Form" style=${INPUT} /><//>
+            `}
+
+            ${kind === "res" && html`
+              <${Field} label="Title"><input value=${d.title} onInput=${set.title} placeholder="e.g. Leader Handbook" style=${INPUT} /><//>
+              <${Field} label="Module group">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  ${resGroups.filter(g => g !== "Ungrouped").map(g => html`<button key=${g} onClick=${() => setD({ group: g })} style=${chip(d.group === g)}>${g}</button>`)}
+                </div>
+                <input value=${d.group} onInput=${set.group} placeholder="Or type a new group, e.g. Module 3" style=${INPUT} />
+              <//>
+              <${Field} label="Link"><input value=${d.fileUrl} onInput=${set.fileUrl} placeholder="Paste a Drive, Docs, YouTube or PDF link" style=${INPUT} /><//>
+            `}
+
+            ${kind === "q" && html`
+              <${Field} label="Answer type">
+                <div style="display:flex;gap:4px;padding:4px;background:#f4f6f9;border-radius:10px;">
+                  ${[["scale", "Scale", "Rating answer"], ["open", "Open", "Written answer"]].map(([id, label, sub]) => html`
+                    <button key=${id} onClick=${() => setD({ type: id })} style=${{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "10px 8px", borderRadius: 8, background: d.type === id ? "#ffffff" : "transparent", color: d.type === id ? "#2f76f4" : "#5b6b86", boxShadow: d.type === id ? "0 1px 3px rgba(5,28,44,.12)" : "none" }}>
+                      <span style="font-size:14px;font-weight:600;">${label}</span>
+                      <span style="font-size:12px;opacity:.75;">${sub}</span>
+                    </button>`)}
+                </div>
+              <//>
+              <${Field} label="Question"><textarea value=${d.text} onInput=${set.text} rows="4" placeholder="e.g. How connected do you feel to your group?" style=${AREA}></textarea><//>
+              <div style="font-size:13px;color:#8b98ac;line-height:1.5;">Scale questions are always asked first, then open ones.${qNote ? ` ${cur.responseCount} ${cur.responseCount === 1 ? "member has" : "members have"} already answered — changing the questions can mix up their saved answers.` : ""}</div>
+            `}
+
+            ${kind === "resp" && resp && html`
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <div style="font-size:14px;color:#5b6b86;">${resp.group}</div>
+                <div style="font-size:13px;color:#8b98ac;">${resp.at}</div>
+              </div>
+              ${resp.items.map(ri => html`<div key=${ri.num} style="display:flex;flex-direction:column;gap:8px;padding-bottom:16px;border-bottom:1px solid #f0f2f7;">
+                <div style="font-size:14px;font-weight:600;color:#111820;line-height:1.4;">${ri.num}. ${ri.q}</div>
+                ${ri.isScale ? html`<div style="display:flex;gap:6px;">${ri.dots.map(dt => html`<div key=${dt.n} style=${dt.style}>${dt.n}</div>`)}</div>`
+                  : html`<div style=${ri.textStyle}>${ri.a}</div>`}
+              </div>`)}
+            `}
+
+            ${kind === "pulse" && html`
+              <${Field} label="Title"><input value=${d.windowTitle} onInput=${set.windowTitle} placeholder="e.g. November Pulse Check" style=${INPUT} /><//>
+              <${Field} label="Opens">
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                  <input type="date" value=${d.openDate} onInput=${set.openDate} style=${INPUT + "flex:1 1 160px;"} />
+                  <input type="time" value=${d.openTime} onInput=${set.openTime} style=${INPUT + "flex:1 1 120px;"} />
+                </div>
+              <//>
+              <${Field} label="Closes">
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                  <input type="date" value=${d.closeDate} onInput=${set.closeDate} style=${INPUT + "flex:1 1 160px;"} />
+                  <input type="time" value=${d.closeTime} onInput=${set.closeTime} style=${INPUT + "flex:1 1 120px;"} />
+                </div>
+                ${windowBad && html`<div style="font-size:13px;color:#d94545;">Close time must be after the open time.</div>`}
+              <//>
+              <div style="font-size:13px;color:#8b98ac;line-height:1.5;">Times are in ${tz}.${!editing ? " You'll add questions on the next screen." : ""}</div>
+            `}
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid #e4ebf2;">
+            <button onClick=${drawer.close} style="height:44px;padding:0 18px;border-radius:10px;border:1px solid #e4ebf2;font-size:14px;font-weight:600;color:#333d4a;">${kind === "resp" ? "Close" : "Cancel"}</button>
+            ${kind !== "resp" && html`<button onClick=${saveDrawer} disabled=${invalid || busy} style=${drawer.saveStyle}>${drawer.saveLabel}</button>`}
+          </div>
+        </div>`}
+
+      ${S.toast && html`
+        <div role="status" style=${{ position: "fixed", top: 16, right: 16, width: 340, maxWidth: "calc(100vw - 32px)", boxSizing: "border-box", background: "#ffffff", border: "1.5px solid " + (S.toastErr ? "#d94545" : "#2f76f4"), borderRadius: 12, padding: "16px 16px 16px 18px", display: "flex", alignItems: "flex-start", gap: 12, boxShadow: "0 10px 30px -12px rgba(5,28,44,.35)", zIndex: 20 }}>
+          <div style=${{ width: 22, height: 22, borderRadius: "50%", background: S.toastErr ? "#d94545" : "#2f76f4", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            ${S.toastErr
+              ? html`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"><path d="M12 6v8M12 18v.5"></path></svg>`
+              : html`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg>`}
+          </div>
+          <div style="flex:1;font-size:15px;font-weight:600;color:#111820;">${S.toast}</div>
+          <button onClick=${() => this.setState({ toast: "" })} aria-label="Dismiss" style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#333d4a" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+          </button>
+        </div>`}
+      `;
+    }
+  }
+
+  const root = document.getElementById("root");
+  root.innerHTML = "";
+  render(html`<${App} />`, root);
+})();
+</script>
