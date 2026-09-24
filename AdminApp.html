@@ -95,6 +95,8 @@ window.__appScriptRan = true;
   // Built from parts: Apps Script strips slash-star comments when serving,
   // and would treat a literal image-slash-star as the start of one.
   const IMG_ACCEPT = "image/" + "*";
+  // Same image as the browser-tab icon (setFaviconUrl in AdminServer.js), 128px.
+  const LOGO_URL = "https:" + "/" + "/lh3.googleusercontent.com/d/17-3NVNtoneKapt_mJMzMXEK7EVuRC_RE=s128";
   const INPUT = "height:46px;border:1.5px solid #e4ebf2;border-radius:10px;padding:0 14px;font-size:15px;color:#111820;background:#ffffff;";
   const AREA = "border:1.5px solid #e4ebf2;border-radius:10px;padding:12px 14px;font-size:15px;line-height:1.5;color:#111820;resize:vertical;";
 
@@ -206,7 +208,7 @@ window.__appScriptRan = true;
       <div style="min-height:100vh;background:#f4f6f9;display:flex;align-items:center;justify-content:center;padding:32px 20px;box-sizing:border-box;">
         <div style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:28px;">
           <div style="display:flex;align-items:center;gap:12px;">
-            <div style="width:44px;height:44px;border-radius:13px;background:#2f76f4;color:#ffffff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;">SG</div>
+            <img src=${LOGO_URL} alt="" width="44" height="44" style="width:44px;height:44px;border-radius:13px;border:1px solid #e4ebf2;background:#ffffff;object-fit:contain;flex-shrink:0;" />
             <div style="display:flex;flex-direction:column;">
               <div style="font-size:16px;font-weight:700;color:#1c3249;">SSG Internal Tools</div>
               <div style="font-size:13px;color:#8b98ac;">Admin</div>
@@ -488,7 +490,7 @@ window.__appScriptRan = true;
       <div style="min-height:100vh;display:flex;">
         <div style=${{ width: S.sideOpen ? 248 : 76, flexShrink: 0, borderRight: "1px solid #e4ebf2", display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", boxSizing: "border-box", background: "#ffffff", transition: "width .15s" }}>
           <div style="display:flex;align-items:center;gap:10px;padding:20px 14px 28px;">
-            <div style="width:38px;height:38px;border-radius:11px;background:#2f76f4;color:#ffffff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;">SG</div>
+            <img src=${LOGO_URL} alt="" width="38" height="38" style="width:38px;height:38px;border-radius:11px;border:1px solid #e4ebf2;background:#ffffff;object-fit:contain;flex-shrink:0;" />
             ${S.sideOpen && html`<div style="display:flex;flex-direction:column;min-width:0;">
               <div style="font-size:15px;font-weight:700;color:#1c3249;white-space:nowrap;">SSG Internal Tools</div>
               <div style="font-size:12px;color:#8b98ac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${roleLabel}</div>
