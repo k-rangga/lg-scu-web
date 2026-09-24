@@ -125,7 +125,7 @@ window.__appScriptRan = true;
       this.state = {
         boot: !!this.token, authed: false, email: a && a.email || "", password: "", showPw: false, loginErr: "", signingIn: false,
         section: "ann", sub: "all", query: "", sort: null, sideOpen: true, drawer: null, toast: "", toastErr: false, pulseId: null,
-        verseDraft: null, data: null, busy: false, ovGroup: "all",
+        verseDraft: null, data: null, busy: false, evView: "list", calMonth: "", ovGroup: "all",
         grpOpen: false, grpQuery: "", imgDrag: false, tick: 0,
       };
     }
@@ -344,6 +344,33 @@ window.__appScriptRan = true;
         return { key: s.userId, o: Object.assign({}, m, { at: s.at }), match: [m.name, m.group].join(" "), keep: true, hasActions: false, onRow: () => this.open("resp", -1, { userId: s.userId, at: s.at }),
           cells: [P(m.name), T(m.group), M(fmtDt(s.at)), { isBadge: true, text: "View answers ›", badgeStyle: { alignSelf: "flex-end", fontSize: 13, fontWeight: 600, color: "#2f76f4" } }] }; });
       rows = rows.filter(r => r.keep && (!q || r.match.toLowerCase().includes(q)));
+
+      // Events calendar: a Monday-first month grid built from the same filtered rows.
+      const showCal = view === "events" && S.evView === "cal";
+      const cal = (() => {
+        if (!showCal) return null;
+        const todayStr = todayYmd(NOW, tz), month = S.calMonth || todayStr.slice(0, 7);
+        const [cy, cm] = month.split("-").map(Number);
+        const iso = (y, m, d) => new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
+        const lead = (new Date(Date.UTC(cy, cm - 1, 1)).getUTCDay() + 6) % 7;
+        const daysIn = new Date(Date.UTC(cy, cm, 0)).getUTCDate();
+        const weeks = Math.ceil((lead + daysIn) / 7);
+        const byDay = {};
+        rows.forEach(r => { const e = r.o; if (e.date) (byDay[e.date] = byDay[e.date] || []).push(e); });
+        Object.keys(byDay).forEach(k => byDay[k].sort((a, b) => (a.start || "").localeCompare(b.start || "")));
+        const cells = [];
+        for (let i = 0; i < weeks * 7; i++) {
+          const date = iso(cy, cm, 1 - lead + i);
+          cells.push({ date, day: Number(date.slice(8)), inMonth: date.slice(0, 7) === month, today: date === todayStr, events: byDay[date] || [] });
+        }
+        const shift = n => { const d = new Date(Date.UTC(cy, cm - 1 + n, 1)); return d.toISOString().slice(0, 7); };
+        return {
+          cells, label: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", year: "numeric" }).format(new Date(Date.UTC(cy, cm - 1, 1))),
+          prev: () => this.setState({ calMonth: shift(-1) }), next: () => this.setState({ calMonth: shift(1) }), today: () => this.setState({ calMonth: todayStr.slice(0, 7) }),
+        };
+      })();
+      const newEventOn = date => this.open("ev", -1, Object.assign({}, empty.ev, { date, group: S.sub !== "all" ? S.sub : "" }));
+      const viewBtn = on => ({ height: 32, padding: "0 12px", borderRadius: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 600, background: on ? "#eef5ff" : "transparent", color: on ? "#2f76f4" : "#5b6b86" });
       if (S.sort && S.sort.view === view) {
         const k = S.sort.key, dir = S.sort.dir;
         rows.sort((a, b) => { const x = a.o[k], y = b.o[k]; return (typeof x === "number" ? x - y : String(x || "").localeCompare(String(y || ""))) * dir; });
@@ -584,6 +611,14 @@ window.__appScriptRan = true;
             ${isTable && html`
               <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:20px 0 16px;">
                 <div style="font-size:14px;color:#8b98ac;flex:1;min-width:120px;">${rows.length} ${rows.length === 1 ? nouns[0] : nouns[1]}</div>
+                ${view === "events" && html`<div style="display:flex;gap:2px;padding:3px;border:1px solid #e4ebf2;border-radius:10px;height:40px;box-sizing:border-box;align-items:center;">
+                  <button onClick=${() => this.setState({ evView: "list" })} style=${viewBtn(!showCal)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"></path></svg>List
+                  </button>
+                  <button onClick=${() => this.setState({ evView: "cal" })} style=${viewBtn(showCal)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M3 10h18M8 3v4M16 3v4"></path></svg>Calendar
+                  </button>
+                </div>`}
                 <div style="display:flex;align-items:center;gap:8px;height:40px;width:340px;max-width:100%;border:1px solid #e4ebf2;border-radius:10px;padding:0 12px;box-sizing:border-box;">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5b6b86" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
                   <input value=${S.query} onInput=${e => this.setState({ query: e.target.value })} placeholder=${page.searchPh} style="flex:1;min-width:0;border:none;font-size:14px;color:#111820;background:transparent;outline:none;" />
@@ -593,6 +628,37 @@ window.__appScriptRan = true;
                   <span>${newBy[view][0]}</span>
                 </button>`}
               </div>
+              ${showCal ? html`
+              <div style="border:1px solid #e4ebf2;border-radius:10px;overflow-x:auto;">
+                <div style="min-width:760px;">
+                  <div style="display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #e4ebf2;">
+                    <div style="flex:1;font-size:18px;font-weight:600;color:#111820;">${cal.label}</div>
+                    <button class="hov-soft" onClick=${cal.today} style="height:36px;padding:0 14px;border-radius:8px;border:1px solid #e4ebf2;font-size:14px;font-weight:600;color:#333d4a;">Today</button>
+                    <button class="hov-soft" onClick=${cal.prev} aria-label="Previous month" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#333d4a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+                    </button>
+                    <button class="hov-soft" onClick=${cal.next} aria-label="Next month" style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#333d4a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"></path></svg>
+                    </button>
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid #e4ebf2;">
+                    ${["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].map(dn => html`<div key=${dn} style="padding:10px 12px;font-size:12px;font-weight:700;letter-spacing:.02em;color:#111820;">${dn}</div>`)}
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(7,1fr);">
+                    ${cal.cells.map((c, i) => html`
+                      <div key=${c.date} onClick=${() => newEventOn(c.date)} title=${"New event on " + fmtDay(c.date)} class="cal-cell"
+                        style=${{ minHeight: 108, padding: "8px 8px 10px", boxSizing: "border-box", cursor: "pointer", borderTop: i >= 7 ? "1px solid #f0f2f7" : "none", borderLeft: i % 7 ? "1px solid #f0f2f7" : "none", background: c.inMonth ? "#ffffff" : "#f9fbfd", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                        <div style=${{ alignSelf: "flex-start", width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 600, background: c.today ? "#2f76f4" : "transparent", color: c.today ? "#ffffff" : c.inMonth ? "#333d4a" : "#b5c0cf" }}>${c.day}</div>
+                        ${c.events.map(e => { const past = evPast(e); return html`
+                          <button key=${e.row} onClick=${ev => { ev.stopPropagation(); this.open("ev", e.row, Object.assign({}, empty.ev, e), e.title); }} title=${e.title + " · " + evTime(e)}
+                            style=${{ display: "flex", gap: 6, alignItems: "baseline", width: "100%", textAlign: "left", padding: "4px 8px", borderRadius: 6, fontSize: 12, background: past ? "#f0f2f7" : "#eef5ff", color: past ? "#5b6b86" : "#1d4ed8", overflow: "hidden", whiteSpace: "nowrap" }}>
+                            ${e.start && html`<span style="font-weight:700;flex-shrink:0;">${fmt12(e.start)}</span>`}
+                            <span style="overflow:hidden;text-overflow:ellipsis;">${e.title}</span>
+                          </button>`; })}
+                      </div>`)}
+                  </div>
+                </div>
+              </div>` : html`
               <div style="border:1px solid #e4ebf2;border-radius:10px;overflow-x:auto;overflow-y:hidden;">
                 <div style="min-width:760px;">
                   <div style=${{ display: "grid", gridTemplateColumns: cfg.grid, gap: 20, alignItems: "center", padding: "0 16px", height: 58, borderBottom: "1px solid #e4ebf2" }}>
@@ -628,7 +694,7 @@ window.__appScriptRan = true;
                     <div style="font-size:14px;color:#8b98ac;">${q ? "Try a different search." : (emptyBy[view] || ["", ""])[1]}</div>
                   </div>`}
                 </div>
-              </div>`}
+              </div>`}`}
 
             ${sec === "verse" && html`
               <div style="display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start;padding-top:28px;">
