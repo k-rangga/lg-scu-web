@@ -1,6 +1,6 @@
 /* ==========================================================================
    ADMIN CONSOLE — server side
-   Served at <web app url>?page=admin (see doGet in Code.js). File is AdminServer.js — Apps Script drops extensions, so it can't share a name with Admin.html. Reads and writes
+   Served at the web app's URL (see doGet in Code.js). File is AdminServer.js — Apps Script drops extensions, so it can't share a name with Admin.html. Reads and writes
    the same tabs the member app reads, in the same cell formats, so anything
    saved here shows up in the app on the next refresh.
 
@@ -44,7 +44,7 @@ function setupAdminConsole() {
   return 'AdminUsers ready' + (owner ? ' — ' + owner + ' is an admin.' : '.');
 }
 
-/* ---- Sheet helpers (also used by savePulse in Code.js) -------------------- */
+/* ---- Sheet helpers ---------------------------------------------------------- */
 
 function isTruthyCell_(v) {
   return v === true || String(v).trim().toUpperCase() === 'TRUE';
@@ -188,18 +188,6 @@ function readPulses_() {
       items: scale.concat(open)
     };
   });
-}
-
-/* The pulse the member app shows: the one open right now (latest opened if
-   several overlap), else the most recently opened one, else the first row. */
-function activePulse_() {
-  const ps = readPulses_();
-  if (!ps.length) return null;
-  const now = new Date();
-  const started = ps.filter(p => !p.openAt || p.openAt <= now)
-    .sort((a, b) => (b.openAt ? b.openAt.getTime() : 0) - (a.openAt ? a.openAt.getTime() : 0));
-  const open = started.filter(p => !p.closeAt || now < p.closeAt);
-  return (open[0] || started[0] || ps[0]).raw;
 }
 
 function looksLikeTimestamp_(v) {
