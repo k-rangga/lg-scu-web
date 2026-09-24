@@ -4,22 +4,20 @@
    the same tabs the member app reads, in the same cell formats, so anything
    saved here shows up in the app on the next refresh.
 
-   Roles
-     admin         — everything, including Pulse Check setup.
-     leader_all    — edits Home content; Pulse Check read-only, every group.
-     leader_group  — edits Home content; Pulse Check read-only, and member
-                     names / individual answers only for their own group.
-   Roles come from the AdminUsers tab (email | role | group). A Users row with
-   role "Mentor" and no AdminUsers row is a leader_group for its own groupId.
-   Run setupAdminConsole() once from the editor to create AdminUsers and make
-   the script owner an admin.
+   Roles (from the Users tab)
+     scope = admin       — everything, including Pulse Check setup, and every
+                           member's pulse answers with their name.
+     scope = leader_all  — edits Home content; Pulse Check read-only, all groups.
+     role  = Mentor      — edits Home content; Pulse Check read-only and limited
+                           to their own group's members.
+   Anyone else (or scope = none) cannot sign in. Run setupAdminConsole() once
+   from the editor to add the scope column and make the script owner an admin.
 
    Every call re-derives the caller from their session token, and pulse data
-   is scoped here before it leaves the server — the client never receives
-   another group's member names or attributable answers for a group leader.
+   is scoped here before it leaves the server — a mentor never receives
+   another group's members or answers.
    ========================================================================== */
 
-const ADMIN_USERS_SHEET = 'AdminUsers';
 const ADMIN_SESSION_PREFIX = 'admsess_';
 const ADMIN_UPLOAD_FOLDER_ID = '10Z7VWwJt6KuCL15CZ68ETsgex4cnls5R';
 const ADMIN_ROLES = ['admin', 'leader_all', 'leader_group'];
@@ -35,13 +33,15 @@ function adminDoGet_() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-/* One-time setup, run from the Apps Script editor. */
+/* One-time setup, run from the Apps Script editor: adds a "scope" column to
+   Users and sets the script owner's scope to admin. */
 function setupAdminConsole() {
-  const sheet = sheetWithHeaders_(ADMIN_USERS_SHEET, ['email', 'role', 'group']);
+  const sheet = sheetWithHeaders_('Users', ['scope']);
   const owner = String(Session.getEffectiveUser().getEmail() || '').trim().toLowerCase();
-  const listed = readSheetAsMap(ADMIN_USERS_SHEET).some(r => String(r.email || '').trim().toLowerCase() === owner);
-  if (owner && !listed) appendByHeader_(sheet, { email: owner, role: 'admin', group: '' });
-  return 'AdminUsers ready' + (owner ? ' — ' + owner + ' is an admin.' : '.');
+  const row = readRows_('Users').find(r => String(r.email || '').trim().toLowerCase() === owner);
+  if (!row) return 'Added the scope column. ' + (owner || 'The owner') + ' has no Users row — set scope = admin by hand.';
+  writeByHeader_(sheet, row.__row, { scope: 'admin' });
+  return 'Added the scope column — ' + owner + ' is an admin.';
 }
 
 /* ---- Sheet helpers ---------------------------------------------------------- */
@@ -269,8 +269,8 @@ function parseAnswers_(raw, items) {
 function normalizeRole_(v) {
   const s = String(v || '').trim().toLowerCase().replace(/[\s\-—·]+/g, '_');
   if (s === 'admin') return 'admin';
-  if (s === 'leader_all' || s === 'leader_all_groups' || s === 'senior') return 'leader_all';
-  if (s === 'leader_group' || s === 'group_leader' || s === 'leader' || s === 'mentor') return 'leader_group';
+  if (s === 'leader_all' || s === 'leader_all_groups') return 'leader_all';
+  if (s === 'mentor' || s === 'leader_group' || s === 'group_leader') return 'leader_group';
   return '';
 }
 
@@ -286,15 +286,13 @@ function adminResolveUser_(email) {
   const u = readSheetAsMap('Users').find(x => String(x.email || '').trim().toLowerCase() === clean);
   if (!u || String(u.status || '').toUpperCase() === 'INACTIVE') return null;
   const groups = readSheetAsMap('Groups');
-  const a = readSheetAsMap(ADMIN_USERS_SHEET).find(x => String(x.email || '').trim().toLowerCase() === clean);
 
-  let role = '', groupKey = u.groupId;
-  if (a) {
-    role = normalizeRole_(a.role);
-    if (a.group) groupKey = a.group;
-  } else if (String(u.role || '').trim().toLowerCase() === 'mentor') {
-    role = 'leader_group';
-  }
+  // scope (a Users column) grants admin / leader_all; a filled-in scope that
+  // isn't one of those (e.g. "none") shuts the console even to a mentor.
+  const scope = String(u.scope || '').trim();
+  let role = normalizeRole_(scope);
+  if (!role && !scope && String(u.role || '').trim().toLowerCase() === 'mentor') role = 'leader_group';
+  const groupKey = u.groupId;
   if (!role) return null;
   const g = findGroup_(groups, groupKey);
   if (role === 'leader_group' && !g) return null;
@@ -440,18 +438,6 @@ function adminData_(ctx) {
       submitted: mine.map(r => ({ userId: r.userId, at: r.at, answers: r.answers })),
       responseCount: all.length
     };
-    // Group leaders get the all-groups picture only as counts, plus open
-    // answers labelled by group name — never who wrote what.
-    if (scopedToGroup) {
-      const scale = p.items.map(() => [0, 0, 0, 0, 0]);
-      const open = p.items.map(() => []);
-      all.forEach(r => r.answers.forEach((a, qi) => {
-        if (p.items[qi].type === 'scale') { if (a) scale[qi][a - 1]++; }
-        else if (a) open[qi].push({ text: a, group: groupName(r.groupId) || 'Unknown group', own: r.groupId === ctx.groupId, userId: r.groupId === ctx.groupId ? r.userId : '' });
-      }));
-      open.forEach(list => list.sort((x, y) => x.text.localeCompare(y.text)));
-      out.agg = { n: all.length, scale: scale, open: open };
-    }
     return out;
   }).sort((a, b) => b.openMs - a.openMs);
 

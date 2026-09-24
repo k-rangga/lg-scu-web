@@ -411,28 +411,24 @@
       };
 
       // Overview board
-      const ovG = S.ovGroup || "all";
+      // A mentor only ever sees their own group, so they get no "All groups" chip.
+      const ovG = leader || S.ovGroup || "all";
       const board = (() => {
         if (view !== "p-overview") return null;
         const nameOf = uid => (memberMap[uid] || {}).name || "";
-        const filters = [["all", "All groups"], ...(leader ? [leader] : groups).map(g => [g, g])].map(([v, l]) => ({ label: l, onClick: () => this.setState({ ovGroup: v }), style: Object.assign(chip(ovG === v), { height: 34 }) }));
-        // A group leader's "All groups" view comes pre-aggregated from the server.
-        const useAgg = !!(leader && ovG === "all" && cur.agg);
-        let subs = [];
-        if (!useAgg) { const ids = new Set(scoped(ovG).map(m => m.userId)); subs = cur.submitted.filter(s => ids.has(s.userId)); }
-        const nResp = useAgg ? cur.agg.n : subs.length;
+        const filters = (leader ? [[leader, leader]] : [["all", "All groups"], ...groups.map(g => [g, g])]).map(([v, l]) => ({ label: l, onClick: () => this.setState({ ovGroup: v }), style: Object.assign(chip(ovG === v), { height: 34 }) }));
+        const ids = new Set(scoped(ovG).map(m => m.userId)), subs = cur.submitted.filter(s => ids.has(s.userId));
+        const nResp = subs.length;
         const questions = nResp ? cur.items.map((it, qi) => {
           if (it.type === "scale") {
-            const cnt = useAgg ? cur.agg.scale[qi].slice() : [0, 0, 0, 0, 0];
-            if (!useAgg) subs.forEach(s => { const a = s.answers[qi]; if (a >= 1 && a <= 5) cnt[a - 1]++; });
+            const cnt = [0, 0, 0, 0, 0];
+            subs.forEach(s => { const a = s.answers[qi]; if (a >= 1 && a <= 5) cnt[a - 1]++; });
             const n = cnt.reduce((x, y) => x + y, 0), avg = n ? cnt.reduce((a, c, i) => a + c * (i + 1), 0) / n : 0;
             return { num: qi + 1, text: it.text, isScale: true, stat: n ? avg.toFixed(1) : "—", statSub: "avg of 5",
               segs: cnt.map((c, i) => { const pct = n ? c / n * 100 : 0; return { label: pct >= 8 ? Math.round(pct) + "%" : "", title: `${SCL[i]}: ${c} (${Math.round(pct)}%)`,
                 style: { width: pct + "%", background: SC[i], color: SCT[i], fontSize: 12, fontWeight: 600, display: pct ? "flex" : "none", alignItems: "center", justifyContent: "center", overflow: "hidden", whiteSpace: "nowrap" } }; }) };
           }
-          const answers = useAgg
-            ? cur.agg.open[qi].map(a => ({ text: a.text, who: a.own ? nameOf(a.userId) || a.group : a.group }))
-            : subs.map(s => ({ text: s.answers[qi] || "", who: !leader || inScope(s.userId) ? nameOf(s.userId) : ((memberMap[s.userId] || {}).group || "") })).filter(a => a.text);
+          const answers = subs.map(s => ({ text: s.answers[qi] || "", who: nameOf(s.userId) || "Unknown member" })).filter(a => a.text);
           return { num: qi + 1, text: it.text, isScale: false, stat: String(answers.length), statSub: answers.length === 1 ? "answer" : "answers", answers };
         }) : [];
         return { filters, questions, countText: `${nResp} ${nResp === 1 ? "response" : "responses"}`, empty: !questions.length,
