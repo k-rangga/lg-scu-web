@@ -396,7 +396,7 @@ window.__appScriptRan = true;
       // Prompt edits read the latest list, not the one from this render.
       const setPrompts = fn => this.setState(s => ({ drawer: Object.assign({}, s.drawer, { draft: Object.assign({}, s.drawer.draft, { prompts: fn(s.drawer.draft.prompts) }) }) }));
       const readImg = f => {
-        if (!f || !/^image\//.test(f.type)) return;
+        if (!f || String(f.type).indexOf("image/") !== 0) return;
         const r = new FileReader();
         r.onload = () => {
           const url = r.result;
@@ -647,9 +647,9 @@ window.__appScriptRan = true;
             ${sec === "verse" && html`
               <div style="display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start;padding-top:28px;">
                 <div style="flex:1 1 420px;max-width:620px;display:flex;flex-direction:column;gap:20px;">
-                  <${Field} label="Label"><input value=${vd.label} onInput=${vSet.label} placeholder="Verse of the month" style=${INPUT} /><//>
-                  <${Field} label="Verse"><textarea value=${vd.text} onInput=${vSet.text} rows="5" placeholder="Paste the verse text, without quotation marks" style=${AREA}></textarea><//>
-                  <${Field} label="Reference"><input value=${vd.reference} onInput=${vSet.reference} placeholder="e.g. Ephesians 2:10" style=${INPUT} /><//>
+                  <${Field} label="Label"><input value=${vd.label} onInput=${vSet.label} placeholder="Verse of the month" style=${INPUT} /></${Field}>
+                  <${Field} label="Verse"><textarea value=${vd.text} onInput=${vSet.text} rows="5" placeholder="Paste the verse text, without quotation marks" style=${AREA}></textarea></${Field}>
+                  <${Field} label="Reference"><input value=${vd.reference} onInput=${vSet.reference} placeholder="e.g. Ephesians 2:10" style=${INPUT} /></${Field}>
                   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px;">
                     <button onClick=${form.save} disabled=${!form.dirty || busy} style=${form.saveStyle}>${busy && form.dirty ? "Saving…" : "Save changes"}</button>
                     ${form.dirty && html`
@@ -695,14 +695,14 @@ window.__appScriptRan = true;
                 </div>
                 <div style=${swTrack}><div style=${swKnob}></div></div>
               </button>
-              <${Field} label="Theme"><input value=${d.theme} onInput=${set.theme} placeholder="e.g. More Than Existing" style=${INPUT} /><//>
-              <${Field} label="Module"><input value=${d.module} onInput=${set.module} placeholder="e.g. Module 7" style=${INPUT} /><//>
+              <${Field} label="Theme"><input value=${d.theme} onInput=${set.theme} placeholder="e.g. More Than Existing" style=${INPUT} /></${Field}>
+              <${Field} label="Module"><input value=${d.module} onInput=${set.module} placeholder="e.g. Module 7" style=${INPUT} /></${Field}>
               <div style="display:flex;gap:12px;flex-wrap:wrap;">
-                <${Field} label="Starts" style=${{ flex: "1 1 140px" }}><input type="date" value=${d.start} onInput=${set.start} style=${INPUT} /><//>
-                <${Field} label="Ends" style=${{ flex: "1 1 140px" }}><input type="date" value=${d.end} onInput=${e => setD({ end: e.target.value })} style=${INPUT} /><//>
+                <${Field} label="Starts" style=${{ flex: "1 1 140px" }}><input type="date" value=${d.start} onInput=${set.start} style=${INPUT} /></${Field}>
+                <${Field} label="Ends" style=${{ flex: "1 1 140px" }}><input type="date" value=${d.end} onInput=${e => setD({ end: e.target.value })} style=${INPUT} /></${Field}>
               </div>
               ${modProblem && html`<div style="font-size:13px;color:#d94545;margin-top:-8px;">${modProblem}</div>`}
-              <${Field} label="Note"><textarea value=${d.note} onInput=${set.note} rows="3" placeholder="Optional — e.g. Remember to read the study materials" style=${AREA}></textarea><//>
+              <${Field} label="Note"><textarea value=${d.note} onInput=${set.note} rows="3" placeholder="Optional — e.g. Remember to read the study materials" style=${AREA}></textarea></${Field}>
               <div style="display:flex;flex-direction:column;gap:8px;">
                 <div style="display:flex;flex-direction:column;gap:2px;">
                   <div style="font-size:14px;font-weight:600;">Reflection prompts</div>
@@ -723,13 +723,13 @@ window.__appScriptRan = true;
             `}
 
             ${kind === "ann" && html`
-              <${Field} label="Title"><input value=${d.title} onInput=${set.title} placeholder="e.g. Combined gathering this Saturday" style=${INPUT} /><//>
+              <${Field} label="Title"><input value=${d.title} onInput=${set.title} placeholder="e.g. Combined gathering this Saturday" style=${INPUT} /></${Field}>
               <${Field} label="Tag">
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
                   ${["Event", "Update", "Prayer", "Reminder"].map(t => html`<button key=${t} onClick=${() => setD({ tag: t })} style=${chip(d.tag === t)}>${t}</button>`)}
                 </div>
                 <input value=${d.tag} onInput=${set.tag} placeholder="Or type a custom tag" style=${INPUT} />
-              <//>
+              </${Field}>
               ${d.time && html`<div style="display:flex;justify-content:space-between;gap:8px;font-size:14px;"><div style="color:#5b6b86;">Created</div><div style="color:#333d4a;font-weight:600;">${d.time}</div></div>`}
               <${Field} label="Image">
                 ${d.imgUrl ? html`<div style="display:flex;flex-direction:column;gap:10px;">
@@ -746,12 +746,12 @@ window.__appScriptRan = true;
                   <div style="font-size:13px;color:#8b98ac;">or <span style="color:#2f76f4;font-weight:600;">browse files</span> · 16:10 works best</div>
                   <input type="file" accept=${IMG_ACCEPT} onChange=${e => { readImg(e.target.files && e.target.files[0]); e.target.value = ""; }} style="display:none;" />
                 </label>`}
-              <//>
-              <${Field} label="Details"><textarea value=${d.detail} onInput=${set.detail} rows="7" placeholder="Full text shown when members open the announcement" style=${AREA}></textarea><//>
+              </${Field}>
+              <${Field} label="Details"><textarea value=${d.detail} onInput=${set.detail} rows="7" placeholder="Full text shown when members open the announcement" style=${AREA}></textarea></${Field}>
             `}
 
             ${kind === "ev" && html`
-              <${Field} label="Event name"><input value=${d.title} onInput=${set.title} placeholder="e.g. Group dinner" style=${INPUT} /><//>
+              <${Field} label="Event name"><input value=${d.title} onInput=${set.title} placeholder="e.g. Group dinner" style=${INPUT} /></${Field}>
               <${Field} label="Group">
                 <div style="position:relative;">
                   <button onClick=${() => this.setState(s => ({ grpOpen: !s.grpOpen, grpQuery: "" }))} style="width:100%;height:46px;border:1.5px solid #e4ebf2;border-radius:10px;padding:0 14px;font-size:15px;background:#ffffff;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;">
@@ -767,26 +767,26 @@ window.__appScriptRan = true;
                   </div>`}
                 </div>
                 <div style="font-size:13px;color:#8b98ac;">${grp.hint}</div>
-              <//>
-              <${Field} label="Date"><input type="date" value=${d.date} onInput=${set.date} style=${INPUT} /><//>
+              </${Field}>
+              <${Field} label="Date"><input type="date" value=${d.date} onInput=${set.date} style=${INPUT} /></${Field}>
               <div style="display:flex;gap:12px;flex-wrap:wrap;">
-                <${Field} label="Starts" style=${{ flex: "1 1 140px" }}><input type="time" value=${d.start} onInput=${set.start} style=${INPUT} /><//>
-                <${Field} label="Ends" style=${{ flex: "1 1 140px" }}><input type="time" value=${d.end} onInput=${set.end} style=${INPUT} /><//>
+                <${Field} label="Starts" style=${{ flex: "1 1 140px" }}><input type="time" value=${d.start} onInput=${set.start} style=${INPUT} /></${Field}>
+                <${Field} label="Ends" style=${{ flex: "1 1 140px" }}><input type="time" value=${d.end} onInput=${set.end} style=${INPUT} /></${Field}>
               </div>
-              <${Field} label="Location"><input value=${d.location} onInput=${set.location} placeholder="e.g. Main Hall, 3rd floor" style=${INPUT} /><//>
-              <${Field} label="Details"><textarea value=${d.detail} onInput=${set.detail} rows="12" placeholder="Full description — agenda, what to expect, what to bring, who to contact" style=${AREA}></textarea><//>
-              <${Field} label="Registration link"><input value=${d.link} onInput=${set.link} placeholder="Optional — e.g. a Google Form" style=${INPUT} /><//>
+              <${Field} label="Location"><input value=${d.location} onInput=${set.location} placeholder="e.g. Main Hall, 3rd floor" style=${INPUT} /></${Field}>
+              <${Field} label="Details"><textarea value=${d.detail} onInput=${set.detail} rows="12" placeholder="Full description — agenda, what to expect, what to bring, who to contact" style=${AREA}></textarea></${Field}>
+              <${Field} label="Registration link"><input value=${d.link} onInput=${set.link} placeholder="Optional — e.g. a Google Form" style=${INPUT} /></${Field}>
             `}
 
             ${kind === "res" && html`
-              <${Field} label="Title"><input value=${d.title} onInput=${set.title} placeholder="e.g. Leader Handbook" style=${INPUT} /><//>
+              <${Field} label="Title"><input value=${d.title} onInput=${set.title} placeholder="e.g. Leader Handbook" style=${INPUT} /></${Field}>
               <${Field} label="Module group">
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
                   ${resGroups.filter(g => g !== "Ungrouped").map(g => html`<button key=${g} onClick=${() => setD({ group: g })} style=${chip(d.group === g)}>${g}</button>`)}
                 </div>
                 <input value=${d.group} onInput=${set.group} placeholder="Or type a new group, e.g. Module 3" style=${INPUT} />
-              <//>
-              <${Field} label="Link"><input value=${d.fileUrl} onInput=${set.fileUrl} placeholder="Paste a Drive, Docs, YouTube or PDF link" style=${INPUT} /><//>
+              </${Field}>
+              <${Field} label="Link"><input value=${d.fileUrl} onInput=${set.fileUrl} placeholder="Paste a Drive, Docs, YouTube or PDF link" style=${INPUT} /></${Field}>
             `}
 
             ${kind === "q" && html`
@@ -798,8 +798,8 @@ window.__appScriptRan = true;
                       <span style="font-size:12px;opacity:.75;">${sub}</span>
                     </button>`)}
                 </div>
-              <//>
-              <${Field} label="Question"><textarea value=${d.text} onInput=${set.text} rows="4" placeholder="e.g. How connected do you feel to your group?" style=${AREA}></textarea><//>
+              </${Field}>
+              <${Field} label="Question"><textarea value=${d.text} onInput=${set.text} rows="4" placeholder="e.g. How connected do you feel to your group?" style=${AREA}></textarea></${Field}>
               <div style="font-size:13px;color:#8b98ac;line-height:1.5;">Scale questions are always asked first, then open ones.${qNote ? ` ${cur.responseCount} ${cur.responseCount === 1 ? "member has" : "members have"} already answered — changing the questions can mix up their saved answers.` : ""}</div>
             `}
 
@@ -816,20 +816,20 @@ window.__appScriptRan = true;
             `}
 
             ${kind === "pulse" && html`
-              <${Field} label="Title"><input value=${d.windowTitle} onInput=${set.windowTitle} placeholder="e.g. November Pulse Check" style=${INPUT} /><//>
+              <${Field} label="Title"><input value=${d.windowTitle} onInput=${set.windowTitle} placeholder="e.g. November Pulse Check" style=${INPUT} /></${Field}>
               <${Field} label="Opens">
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
                   <input type="date" value=${d.openDate} onInput=${set.openDate} style=${INPUT + "flex:1 1 160px;"} />
                   <input type="time" value=${d.openTime} onInput=${set.openTime} style=${INPUT + "flex:1 1 120px;"} />
                 </div>
-              <//>
+              </${Field}>
               <${Field} label="Closes">
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
                   <input type="date" value=${d.closeDate} onInput=${set.closeDate} style=${INPUT + "flex:1 1 160px;"} />
                   <input type="time" value=${d.closeTime} onInput=${set.closeTime} style=${INPUT + "flex:1 1 120px;"} />
                 </div>
                 ${windowBad && html`<div style="font-size:13px;color:#d94545;">Close time must be after the open time.</div>`}
-              <//>
+              </${Field}>
               <div style="font-size:13px;color:#8b98ac;line-height:1.5;">Times are in ${tz}.${!editing ? " You'll add questions on the next screen." : ""}</div>
             `}
           </div>
