@@ -178,12 +178,13 @@ function splitQuestions_(v) {
 }
 
 function readPulses_() {
-  return readRows_('Pulse').filter(r => id_(r.pulse_id) || str_(r.windowTitle)).map(r => {
+  return readRows_('Pulse').filter(r => id_(r.pulse_id) || id_(r.checkId || r.check_id) || str_(r.windowTitle)).map(r => {
     const scale = splitQuestions_(r.questions).map(text => ({ text: text, type: 'scale' }));
     const open = splitQuestions_(r.open_questions).map(text => ({ text: text, type: 'open' }));
     return {
       row: r.__row,
-      id: id_(r.pulse_id),
+      id: id_(r.pulse_id) || id_(r.checkId || r.check_id),
+      checkId: id_(r.checkId || r.check_id),
       raw: r,
       windowTitle: str_(r.windowTitle),
       openAt: asDate_(r['open date']),
@@ -197,15 +198,28 @@ function looksLikeTimestamp_(v) {
   return v instanceof Date || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v || ''));
 }
 
-/* The member app appends  userId | timestamp | answers | note  by position and
-   does not record which pulse check a response is for. Older copies of the
-   tab carried a "pulse id" header in column B, which shifted every header one
-   column off its data. So each row's values are recognised by shape, not by
-   header, and a missing pulse id is inferred from the pulse check whose
-   window contains the timestamp (else the first pulse check).
-   restructurePulseData() rewrites the tab into the layout the app writes,
-   with the pulse id added as a last column. */
-const PULSE_RESPONSE_HEADERS = ['userId', 'timestamp', 'answers', 'note', 'pulse id'];
+/* PulseResponses, as the member app now writes it:
+     userId | pulse_id | timestamp | answers | checkId | note | status |
+     updatedAt | submittedAt
+   answers is JSON keyed by question: {"q1":4,…,"q6":"text"} — q1… follow the
+   order the app asks them in (scale questions first, then open ones).
+   checkId names the pulse check ("legacy-20260930" = the one closing on
+   2026-09-30). Rows migrated from the old layout keep their original
+   submission time under pulse_id, and have "{4;3;…}" answers if unmigrated,
+   so values are matched by header first and by shape as a fallback. */
+
+function pulseForResponse_(pulses, checkId, pulseIdCell, at) {
+  const key = id_(checkId) || (looksLikeTimestamp_(pulseIdCell) ? '' : id_(pulseIdCell));
+  if (key) {
+    const direct = pulses.find(p => p.checkId === key || p.id === key);
+    if (direct) return { pulse: direct, inferred: false };
+    const legacy = key.match(/^legacy-(\d{8})$/);
+    const byClose = legacy && pulses.find(p => p.closeAt && Utilities.formatDate(p.closeAt, tz_(), 'yyyyMMdd') === legacy[1]);
+    if (byClose) return { pulse: byClose, inferred: false };
+  }
+  const hit = at && pulses.find(p => (!p.openAt || p.openAt <= at) && (!p.closeAt || at < p.closeAt));
+  return { pulse: hit || pulses[0] || null, inferred: true };
+}
 
 function parsePulseResponseRows_(pulses) {
   const data = sheetValues_('PulseResponses');
@@ -213,31 +227,34 @@ function parsePulseResponseRows_(pulses) {
   const h = data[0].map(x => String(x).trim().toLowerCase());
   const col = names => { for (const n of names) { const i = h.indexOf(n); if (i !== -1) return i; } return -1; };
   const iUser = col(['userid', 'user id']);
-  const iPulse = col(['pulse id', 'pulseid', 'pulse_id']);
+  const iPulse = col(['pulse_id', 'pulse id', 'pulseid']);
+  const iTime = col(['timestamp']);
+  const iAns = col(['answers']);
+  const iCheck = col(['checkid', 'check id', 'check_id']);
+  const iNote = col(['note']);
+  const iStatus = col(['status']);
+  const iSubmitted = col(['submittedat', 'submitted at', 'submitted_at']);
+  const isAnswers = v => /^\s*\{/.test(String(v));
   const out = [];
   for (let r = 1; r < data.length; r++) {
     const row = data[r];
     if (row.every(v => v === '' || v === null)) continue;
     const userId = id_(row[iUser !== -1 ? iUser : 0]);
-    const iAns = row.findIndex(v => /^\s*\{/.test(String(v)));
-    const iStamp = row.findIndex(v => looksLikeTimestamp_(v));
-    const stamp = iStamp === -1 ? '' : row[iStamp];
+    const answersRaw = iAns !== -1 && isAnswers(row[iAns]) ? String(row[iAns]) : String(row.find(isAnswers) || '');
+    // Original submission time: timestamp, else (migrated rows) the old time under pulse_id, else submittedAt.
+    const stamp = [iTime, iPulse, iSubmitted].map(i => i === -1 ? '' : row[i]).find(v => looksLikeTimestamp_(v)) || row.find(v => looksLikeTimestamp_(v)) || '';
     const at = asDate_(stamp);
-    // The note is whatever follows the answers, unless that cell is the pulse id column.
-    const note = iAns !== -1 && iAns + 1 < row.length && iAns + 1 !== iPulse ? str_(row[iAns + 1]) : '';
-
-    let pulseId = iPulse !== -1 ? row[iPulse] : '';
-    if (looksLikeTimestamp_(pulseId) || /^\s*\{/.test(String(pulseId))) pulseId = '';
-    pulseId = id_(pulseId);
-    let inferred = false;
-    if (!pulseId && pulses.length) {
-      const hit = at && pulses.find(p => (!p.openAt || p.openAt <= at) && (!p.closeAt || at < p.closeAt));
-      pulseId = (hit || pulses[0]).id;
-      inferred = true;
-    }
+    const status = iStatus === -1 ? '' : String(row[iStatus] || '').trim().toLowerCase();
+    const match = pulses.length ? pulseForResponse_(pulses, iCheck === -1 ? '' : row[iCheck], iPulse === -1 ? '' : row[iPulse], at) : { pulse: null, inferred: true };
     out.push({
-      row: r + 1, userId: userId, stamp: stamp, at: at, note: note, pulseId: pulseId, inferred: inferred,
-      answersRaw: iAns === -1 ? '' : String(row[iAns]), readable: !!userId && iAns !== -1
+      row: r + 1, userId: userId, at: at, answersRaw: answersRaw,
+      note: iNote === -1 ? '' : str_(row[iNote]),
+      checkId: iCheck === -1 ? '' : id_(row[iCheck]),
+      status: status,
+      pulseId: match.pulse ? match.pulse.id : '',
+      inferred: match.inferred,
+      // Drafts or other non-final states are not counted as submitted.
+      readable: !!userId && !!answersRaw && (!status || status === 'submitted')
     });
   }
   return out;
@@ -254,8 +271,9 @@ function readPulseResponses_(pulses) {
   return Object.keys(byKey).map(k => byKey[k]);
 }
 
-/* Read-only check, run from the editor: logs what restructurePulseData()
-   would find and change. */
+/* Read-only check, run from the editor: logs how the console reads
+   PulseResponses — skipped rows, which pulse check each row counts for, and
+   rows whose answers don't match that check's questions. */
 function inspectPulseData() {
   const report = pulseDataReport_();
   Logger.log(JSON.stringify(report, null, 2));
@@ -265,22 +283,18 @@ function inspectPulseData() {
 function pulseDataReport_() {
   const pulses = readPulses_();
   const rows = parsePulseResponseRows_(pulses);
-  const data = sheetValues_('PulseResponses') || [[]];
-  const header = data[0].map(x => String(x).trim());
   const seen = {};
   return {
-    header: header,
-    headerMatchesLayout: PULSE_RESPONSE_HEADERS.every((hd, i) => header[i] === hd),
+    header: ((sheetValues_('PulseResponses') || [[]])[0]).map(x => String(x).trim()),
     rows: rows.length,
-    unreadableRows: rows.filter(r => !r.readable).map(r => r.row),
-    rowsWithoutPulseId: rows.filter(r => r.inferred).length,
+    skippedRows: rows.filter(r => !r.readable).map(r => ({ row: r.row, status: r.status, hasUser: !!r.userId, hasAnswers: !!r.answersRaw })),
+    rowsMatchedByTime: rows.filter(r => r.readable && r.inferred).map(r => r.row),
     pulses: pulses.map(p => {
       const mine = rows.filter(r => r.readable && r.pulseId === p.id);
-      const counts = mine.map(r => parseAnswerTokens_(r.answersRaw).length);
       return {
-        id: p.id, title: p.windowTitle, questions: p.items.length, responses: mine.length,
-        members: new Set(mine.map(r => r.userId)).size,
-        answerCountMismatchRows: mine.filter((r, i) => counts[i] !== p.items.length).map(r => r.row)
+        id: p.id, checkId: p.checkId, title: p.windowTitle, questions: p.items.length,
+        responses: mine.length, members: new Set(mine.map(r => r.userId)).size,
+        answerCountMismatchRows: mine.filter(r => answerCount_(r.answersRaw) !== p.items.length).map(r => r.row)
       };
     }),
     duplicateSubmissions: rows.filter(r => r.readable).filter(r => {
@@ -289,43 +303,18 @@ function pulseDataReport_() {
   };
 }
 
-/* One-time fix, run from the editor. Copies PulseResponses to a backup tab,
-   then rewrites it as  userId | timestamp | answers | note | pulse id  with
-   every row in its column and the pulse id filled in. Nothing is dropped:
-   duplicate submissions stay (the console uses the latest), and rows it can't
-   read are kept as they were. */
-function restructurePulseData() {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const ss = ss_(), sheet = ss.getSheetByName('PulseResponses');
-    if (!sheet) return 'No PulseResponses tab.';
-    const before = pulseDataReport_();
-    const stamp = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HHmm');
-    const backup = sheet.copyTo(ss).setName('PulseResponses backup ' + stamp);
-
-    const pulses = readPulses_();
-    const raw = sheetValues_('PulseResponses');
-    const rows = parsePulseResponseRows_(pulses).map(r => r.readable
-      ? [r.userId, r.stamp instanceof Date ? r.stamp.toISOString() : str_(r.stamp), r.answersRaw, r.note, r.pulseId]
-      : raw[r.row - 1].slice(0, PULSE_RESPONSE_HEADERS.length).concat(['', '', '', '', '']).slice(0, PULSE_RESPONSE_HEADERS.length));
-
-    sheet.clearContents();
-    const out = [PULSE_RESPONSE_HEADERS].concat(rows);
-    // Plain text keeps the ISO timestamps and "{…}" answers exactly as written.
-    sheet.getRange(1, 1, out.length, PULSE_RESPONSE_HEADERS.length).setNumberFormat('@').setValues(out);
-    SpreadsheetApp.flush();
-    clearSheetMemo_();
-    bumpAdminDataGen_();
-
-    const msg = 'Restructured ' + rows.length + ' rows (' + before.rowsWithoutPulseId + ' pulse ids filled in). Backup: "' + backup.getName() + '".';
-    Logger.log(msg);
-    return msg;
-  } finally {
-    lock.releaseLock();
-  }
+function answerCount_(raw) {
+  const obj = parseAnswerJson_(raw);
+  return obj ? Object.keys(obj).length : parseAnswerTokens_(raw).length;
 }
 
+function parseAnswerJson_(raw) {
+  const s = String(raw || '').trim();
+  if (!/^\{\s*"/.test(s)) return null;
+  try { const o = JSON.parse(s); return o && typeof o === 'object' && !Array.isArray(o) ? o : null; } catch (err) { return null; }
+}
+
+/* Old "{4;3;"text"}" answers — scale values then quoted open answers. */
 function parseAnswerTokens_(raw) {
   let s = String(raw || '').trim().replace(/^\{/, '').replace(/\}$/, '');
   const tokens = [];
@@ -348,14 +337,17 @@ function parseAnswerTokens_(raw) {
 }
 
 function parseAnswers_(raw, items) {
-  const tokens = parseAnswerTokens_(raw);
+  const obj = parseAnswerJson_(raw);
+  const values = obj ? Object.keys(obj).map(k => obj[k]) : null;
+  const tokens = obj ? null : parseAnswerTokens_(raw);
   return items.map((it, k) => {
-    const t = tokens[k];
+    // JSON answers are keyed q1…; fall back to key order if the keys differ.
+    const t = obj ? (('q' + (k + 1)) in obj ? obj['q' + (k + 1)] : values[k]) : tokens[k];
     if (it.type === 'scale') {
       const n = parseInt(t, 10);
       return n >= 1 && n <= 5 ? n : null;
     }
-    return t ? String(t).trim() : '';
+    return t === null || t === undefined ? '' : String(t).trim();
   });
 }
 
