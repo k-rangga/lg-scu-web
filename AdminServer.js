@@ -197,49 +197,136 @@ function looksLikeTimestamp_(v) {
   return v instanceof Date || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v || ''));
 }
 
-/* Older rows were written without a pulse id, so their columns sit one to the
-   left of the header (timestamp under "pulse id", answers under "timestamp").
-   Values are recognised by shape, and such rows are credited to the pulse
-   whose window contains their timestamp (else the first pulse). */
-function readPulseResponses_(pulses) {
-  const sheet = ss_().getSheetByName('PulseResponses');
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
+/* The member app appends  userId | timestamp | answers | note  by position and
+   does not record which pulse check a response is for. Older copies of the
+   tab carried a "pulse id" header in column B, which shifted every header one
+   column off its data. So each row's values are recognised by shape, not by
+   header, and a missing pulse id is inferred from the pulse check whose
+   window contains the timestamp (else the first pulse check).
+   restructurePulseData() rewrites the tab into the layout the app writes,
+   with the pulse id added as a last column. */
+const PULSE_RESPONSE_HEADERS = ['userId', 'timestamp', 'answers', 'note', 'pulse id'];
+
+function parsePulseResponseRows_(pulses) {
+  const data = sheetValues_('PulseResponses');
+  if (!data || data.length < 2) return [];
   const h = data[0].map(x => String(x).trim().toLowerCase());
   const col = names => { for (const n of names) { const i = h.indexOf(n); if (i !== -1) return i; } return -1; };
   const iUser = col(['userid', 'user id']);
   const iPulse = col(['pulse id', 'pulseid', 'pulse_id']);
-  const byKey = {};
-
+  const out = [];
   for (let r = 1; r < data.length; r++) {
     const row = data[r];
+    if (row.every(v => v === '' || v === null)) continue;
     const userId = id_(row[iUser !== -1 ? iUser : 0]);
-    if (!userId) continue;
-    const answers = row.find(v => /^\s*\{/.test(String(v)));
-    const stamp = row.find(v => looksLikeTimestamp_(v));
-    if (answers === undefined) continue;
+    const iAns = row.findIndex(v => /^\s*\{/.test(String(v)));
+    const iStamp = row.findIndex(v => looksLikeTimestamp_(v));
+    const stamp = iStamp === -1 ? '' : row[iStamp];
     const at = asDate_(stamp);
+    // The note is whatever follows the answers, unless that cell is the pulse id column.
+    const note = iAns !== -1 && iAns + 1 < row.length && iAns + 1 !== iPulse ? str_(row[iAns + 1]) : '';
 
     let pulseId = iPulse !== -1 ? row[iPulse] : '';
     if (looksLikeTimestamp_(pulseId) || /^\s*\{/.test(String(pulseId))) pulseId = '';
     pulseId = id_(pulseId);
+    let inferred = false;
     if (!pulseId && pulses.length) {
       const hit = at && pulses.find(p => (!p.openAt || p.openAt <= at) && (!p.closeAt || at < p.closeAt));
       pulseId = (hit || pulses[0]).id;
+      inferred = true;
     }
-
-    // A member who submitted twice counts once, with their latest answers.
-    const key = pulseId + '|' + userId;
-    const prev = byKey[key];
-    if (!prev || (at && (!prev.at || at > prev.at))) {
-      byKey[key] = { pulseId: pulseId, userId: userId, at: at, answersRaw: String(answers) };
-    }
+    out.push({
+      row: r + 1, userId: userId, stamp: stamp, at: at, note: note, pulseId: pulseId, inferred: inferred,
+      answersRaw: iAns === -1 ? '' : String(row[iAns]), readable: !!userId && iAns !== -1
+    });
   }
+  return out;
+}
+
+function readPulseResponses_(pulses) {
+  const byKey = {};
+  parsePulseResponseRows_(pulses).filter(r => r.readable).forEach(r => {
+    // A member who submitted twice counts once, with their latest answers.
+    const key = r.pulseId + '|' + r.userId;
+    const prev = byKey[key];
+    if (!prev || (r.at && (!prev.at || r.at > prev.at))) byKey[key] = r;
+  });
   return Object.keys(byKey).map(k => byKey[k]);
 }
 
-function parseAnswers_(raw, items) {
+/* Read-only check, run from the editor: logs what restructurePulseData()
+   would find and change. */
+function inspectPulseData() {
+  const report = pulseDataReport_();
+  Logger.log(JSON.stringify(report, null, 2));
+  return report;
+}
+
+function pulseDataReport_() {
+  const pulses = readPulses_();
+  const rows = parsePulseResponseRows_(pulses);
+  const data = sheetValues_('PulseResponses') || [[]];
+  const header = data[0].map(x => String(x).trim());
+  const seen = {};
+  return {
+    header: header,
+    headerMatchesLayout: PULSE_RESPONSE_HEADERS.every((hd, i) => header[i] === hd),
+    rows: rows.length,
+    unreadableRows: rows.filter(r => !r.readable).map(r => r.row),
+    rowsWithoutPulseId: rows.filter(r => r.inferred).length,
+    pulses: pulses.map(p => {
+      const mine = rows.filter(r => r.readable && r.pulseId === p.id);
+      const counts = mine.map(r => parseAnswerTokens_(r.answersRaw).length);
+      return {
+        id: p.id, title: p.windowTitle, questions: p.items.length, responses: mine.length,
+        members: new Set(mine.map(r => r.userId)).size,
+        answerCountMismatchRows: mine.filter((r, i) => counts[i] !== p.items.length).map(r => r.row)
+      };
+    }),
+    duplicateSubmissions: rows.filter(r => r.readable).filter(r => {
+      const k = r.pulseId + '|' + r.userId; if (seen[k]) return true; seen[k] = true; return false;
+    }).map(r => r.row)
+  };
+}
+
+/* One-time fix, run from the editor. Copies PulseResponses to a backup tab,
+   then rewrites it as  userId | timestamp | answers | note | pulse id  with
+   every row in its column and the pulse id filled in. Nothing is dropped:
+   duplicate submissions stay (the console uses the latest), and rows it can't
+   read are kept as they were. */
+function restructurePulseData() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const ss = ss_(), sheet = ss.getSheetByName('PulseResponses');
+    if (!sheet) return 'No PulseResponses tab.';
+    const before = pulseDataReport_();
+    const stamp = Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HHmm');
+    const backup = sheet.copyTo(ss).setName('PulseResponses backup ' + stamp);
+
+    const pulses = readPulses_();
+    const raw = sheetValues_('PulseResponses');
+    const rows = parsePulseResponseRows_(pulses).map(r => r.readable
+      ? [r.userId, r.stamp instanceof Date ? r.stamp.toISOString() : str_(r.stamp), r.answersRaw, r.note, r.pulseId]
+      : raw[r.row - 1].slice(0, PULSE_RESPONSE_HEADERS.length).concat(['', '', '', '', '']).slice(0, PULSE_RESPONSE_HEADERS.length));
+
+    sheet.clearContents();
+    const out = [PULSE_RESPONSE_HEADERS].concat(rows);
+    // Plain text keeps the ISO timestamps and "{…}" answers exactly as written.
+    sheet.getRange(1, 1, out.length, PULSE_RESPONSE_HEADERS.length).setNumberFormat('@').setValues(out);
+    SpreadsheetApp.flush();
+    clearSheetMemo_();
+    bumpAdminDataGen_();
+
+    const msg = 'Restructured ' + rows.length + ' rows (' + before.rowsWithoutPulseId + ' pulse ids filled in). Backup: "' + backup.getName() + '".';
+    Logger.log(msg);
+    return msg;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function parseAnswerTokens_(raw) {
   let s = String(raw || '').trim().replace(/^\{/, '').replace(/\}$/, '');
   const tokens = [];
   let i = 0;
@@ -257,6 +344,11 @@ function parseAnswers_(raw, items) {
       i = j + 1;
     }
   }
+  return tokens;
+}
+
+function parseAnswers_(raw, items) {
+  const tokens = parseAnswerTokens_(raw);
   return items.map((it, k) => {
     const t = tokens[k];
     if (it.type === 'scale') {
