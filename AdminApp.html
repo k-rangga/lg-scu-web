@@ -63,6 +63,9 @@ window.__appScriptRan = true;
     const t = x => { const [y, m, d] = x.split("-").map(Number); return Date.UTC(y, m - 1, d); };
     return Math.round((t(b) - t(a)) / 86400000);
   }
+  // Rendered width of a string, for sizing a column to its longest label.
+  const measureCanvas = document.createElement("canvas").getContext("2d");
+  function textWidth(text, font) { measureCanvas.font = font; return Math.ceil(measureCanvas.measureText(String(text)).width); }
   const isOnline = loc => /meet|zoom|https?:/i.test(String(loc || ""));
   const evKey = e => [e.title, e.date, e.start, e.location, e.group].join("|");
   const setKey = e => [e.title, e.date, e.start, e.location].join("|");
@@ -622,6 +625,8 @@ window.__appScriptRan = true;
           style: { display: "flex", alignItems: "center", gap: 12, height: 50, padding: "0 12px", borderRadius: 10, fontSize: 15, fontWeight: on ? 600 : 500, color: on ? "#2f76f4" : "#5b6b86", background: on ? "#eef5ff" : "transparent", justifyContent: S.sideOpen ? "flex-start" : "center", whiteSpace: "nowrap" } };
       });
       const cs = cur ? stats(cur, leader) : null;
+      // Module group column: wide enough for the longest group name, the same on every row.
+      const resGroupCol = Math.max(140, ...D0.res.map(r => textWidth(r.group || "Ungrouped", "600 12px Geist, Helvetica, Arial, sans-serif") + 24));
       const resGroups = [...new Set(D0.res.map(r => r.group || "Ungrouped"))].sort((a, b) => (a === "Onboarding" ? -1 : b === "Onboarding" ? 1 : a.localeCompare(b, undefined, { numeric: true })));
       const subsBy = {
         ann: [["all", "All"], ...[...new Set(D0.ann.map(a => a.tag).filter(Boolean))].map(t => [t, t])],
@@ -637,7 +642,7 @@ window.__appScriptRan = true;
           style: { height: 50, padding: "0 20px", fontSize: 14, fontWeight: 500, letterSpacing: ".03em", whiteSpace: "nowrap", color: on ? "#2f76f4" : "#333d4a", borderBottom: on ? "2px solid #2f76f4" : "2px solid transparent", flexShrink: 0 } };
       });
 
-      const badge = (bg, fg) => ({ alignSelf: "flex-start", fontSize: 12, fontWeight: 600, background: bg, color: fg, borderRadius: 100, padding: "3px 10px", whiteSpace: "nowrap" });
+      const badge = (bg, fg) => ({ alignSelf: "flex-start", maxWidth: "100%", boxSizing: "border-box", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12, fontWeight: 600, background: bg, color: fg, borderRadius: 100, padding: "3px 10px", whiteSpace: "nowrap" });
       const T = t => ({ text: t, isText: true }), M = t => ({ text: t, isMuted: true }), P = (t, sub) => ({ text: t, sub, isPrimary: true }), B = (t, bg, fg) => ({ text: t, isBadge: true, badgeStyle: badge(bg, fg) });
       const stop = fn => e => { e && e.stopPropagation && e.stopPropagation(); fn(); };
       const del = (label, fn, args, msg) => { if (!busy && confirm(`Delete "${label}"?`)) this.mutate(fn, args, msg); };
@@ -649,7 +654,7 @@ window.__appScriptRan = true;
         module: { grid: "minmax(240px,2.6fr) 130px minmax(150px,1.2fr) 110px 110px 150px", heads: [["THEME", "theme"], ["MODULE", "module"], ["DATES", "start"], ["PROMPTS", null], ["STATUS", null], ["", null]] },
         ann: { grid: "minmax(240px,2.6fr) 130px minmax(140px,1.2fr) 110px 150px", heads: [["TITLE", "title"], ["TAG", "tag"], ["CREATED", null], ["IMAGE", null], ["", null]] },
         events: { grid: "minmax(220px,2.2fr) 150px minmax(190px,1.3fr) minmax(130px,1fr) 110px 150px", heads: [["EVENT", "title"], ["GROUP", "group"], ["WHEN", "date"], ["LOCATION", "location"], ["STATUS", null], ["", null]] },
-        res: { grid: "minmax(240px,2.4fr) minmax(140px,1fr) minmax(180px,1.4fr) 150px", heads: [["TITLE", "title"], ["MODULE GROUP", "group"], ["LINK", null], ["", null]] },
+        res: { grid: `minmax(200px,2fr) ${resGroupCol}px minmax(140px,1fr) 150px`, heads: [["TITLE", "title"], ["MODULE GROUP", "group"], ["LINK", null], ["", null]] },
         pulses: { grid: "minmax(220px,2.2fr) minmax(150px,1.2fr) minmax(150px,1.2fr) minmax(150px,1.1fr) 120px 100px" + (ro ? "" : " 150px"), heads: [["PULSE CHECK", "windowTitle"], ["OPENS", "openMs"], ["CLOSES", "closeMs"], ["SUBMITTED", "done"], ["NOT FILLED IN", "left"], ["STATUS", null], ...(ro ? [] : [["", null]])] },
         "p-questions": { grid: "60px minmax(300px,4fr) 130px 150px", heads: [["#", null], ["QUESTION", "text"], ["TYPE", "type"], ["", null]] },
         "p-notfilled": { grid: "minmax(240px,2fr) minmax(160px,1.2fr) minmax(200px,1.4fr)", heads: [["NAME", "name"], ["GROUP", "group"], ["EMAIL", "email"]] },
@@ -666,7 +671,7 @@ window.__appScriptRan = true;
       if (view === "ann") rows = D0.ann.map(a => ({ key: a.row, o: a, match: [a.title, a.tag, a.detail].join(" "), keep: S.sub === "all" || a.tag === S.sub, hasActions: A, editLabel: "Edit",
         cells: [P(a.title, a.detail), a.tag ? B(a.tag, "#cae7ff", "#2f76f4") : M("—"), a.time ? T(a.time) : M("—"), a.imgUrl ? B("Added", "#e6f4ea", "#15803d") : M("None")],
         onEdit: stop(() => this.open("ann", a.row, Object.assign({}, empty.ann, a), a.title)), onDelete: stop(() => del(a.title, "adminDeleteItem", ["ann", a.row, a.title], "Announcement deleted")) }));
-      if (view === "res") rows = D0.res.map(r => ({ key: r.row, o: r, match: [r.title, r.group, r.fileUrl].join(" "), keep: true, hasActions: A, editLabel: "Edit",
+      if (view === "res") rows = D0.res.slice().sort((a, b) => resGroups.indexOf(a.group || "Ungrouped") - resGroups.indexOf(b.group || "Ungrouped")).map(r => ({ key: r.row, o: r, match: [r.title, r.group, r.fileUrl].join(" "), keep: true, hasActions: A, editLabel: "Edit",
         cells: [P(r.title, detect(r.fileUrl)), r.group ? B(r.group, "#cae7ff", "#2f76f4") : M("Ungrouped"), { text: host(r.fileUrl), href: r.fileUrl, isLink: true }],
         onEdit: stop(() => this.open("res", r.row, Object.assign({}, empty.res, r), r.title)), onDelete: stop(() => del(r.title, "adminDeleteItem", ["res", r.row, r.title], "Resource deleted")) }));
       if (view === "pulses") rows = D0.pulses.map(p => {
