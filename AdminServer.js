@@ -519,16 +519,7 @@ function adminData_(ctx) {
     };
   });
 
-  const events = readRows_('Events').filter(e => str_(e.title)).map(e => {
-    const gid = id_(e['Group ID']);
-    const group = gid.toUpperCase() === 'ALL' ? (isTruthyCell_(e.is_mentor_only) ? EVENT_MENTORS : EVENT_ALL) : groupName(gid);
-    const d = asDate_(e.date);
-    return {
-      row: e.__row, title: str_(e.title), group: group,
-      date: d ? ymd_(d) : '', start: timeCellTo24_(e.time), end: timeCellTo24_(e.end),
-      location: str_(e.location), detail: str_(e.description), link: str_(e.link)
-    };
-  }).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+  const events = readEvents_(groupName);
 
   const res = readRows_('Resources').filter(r => str_(r.title) || str_(r.fileUrl)).map(r => ({
     row: r.__row, title: str_(r.title), group: str_(r.module), fileUrl: str_(r.fileUrl)
@@ -747,6 +738,69 @@ function adminSaveItem(token, kind, row, expectTitle, d) {
       if (kind === 'res') values.dateAdded = new Date();
       writeByHeader_(sheet, sheet.getLastRow() + 1, values, textKeys);
     }
+  });
+}
+
+/* ---- Events: reading, and acting on a whole set of copies -------------------
+   The same event is stored once per group, so the console edits and deletes
+   "sets". Each copy is identified by its row plus what the client last saw
+   (title, date, start, location, group); if rows moved in the meantime the
+   copy is found again by those fields, so a delayed (undoable) delete never
+   hits the wrong row.
+   -------------------------------------------------------------------------- */
+
+function readEvents_(groupName) {
+  if (!groupName) {
+    const groups = readSheetAsMap('Groups');
+    groupName = gid => { const g = groups.find(x => id_(x.groupId) === gid); return g ? str_(g.name) : gid; };
+  }
+  return readRows_('Events').filter(e => str_(e.title)).map(e => {
+    const gid = id_(e['Group ID']);
+    const group = gid.toUpperCase() === 'ALL' ? (isTruthyCell_(e.is_mentor_only) ? EVENT_MENTORS : EVENT_ALL) : groupName(gid);
+    const d = asDate_(e.date);
+    return {
+      row: e.__row, title: str_(e.title), group: group,
+      date: d ? ymd_(d) : '', start: timeCellTo24_(e.time), end: timeCellTo24_(e.end),
+      location: str_(e.location), detail: str_(e.description), link: str_(e.link)
+    };
+  }).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+}
+
+function findEventRows_(copies) {
+  const all = readEvents_();
+  const same = (e, c) => e.title === str_(c.title) && e.date === str_(c.date) && e.start === str_(c.start) &&
+    e.location === str_(c.location) && e.group === str_(c.group);
+  const used = {};
+  return (copies || []).map(c => {
+    let hit = all.find(e => e.row === Number(c.row) && same(e, c));
+    if (!hit || used[hit.row]) hit = all.find(e => !used[e.row] && same(e, c));
+    if (!hit) throw new Error('An event in this set changed in the sheet. Reload and try again.');
+    used[hit.row] = true;
+    return hit.row;
+  });
+}
+
+/* Writes the shared fields to every copy; each copy keeps its own group. */
+function adminSaveEventSet(token, copies, d) {
+  return adminCall_(token, 'content', () => {
+    const title = str_(d.title).trim();
+    if (!title || !d.date) throw new Error('Event needs a name and a date.');
+    const sheet = sheetWithHeaders_('Events', ADMIN_KINDS.ev.headers);
+    const values = {
+      title: title, date: parseLocal_(d.date, '00:00'), time: time24ToCell_(d.start), end: time24ToCell_(d.end),
+      location: str_(d.location).trim(), description: str_(d.detail).trim(), link: str_(d.link).trim()
+    };
+    findEventRows_(copies).forEach(r => writeByHeader_(sheet, r, values, ['time', 'end']));
+  });
+}
+
+function adminDeleteEvents(token, copies) {
+  return adminCall_(token, 'content', () => {
+    const sheet = ss_().getSheetByName('Events');
+    if (!sheet) throw new Error('Sheet not found.');
+    // Bottom-up, so deleting one row doesn't move the next.
+    findEventRows_(copies).sort((a, b) => b - a).forEach(r => sheet.deleteRow(r));
+    clearSheetMemo_();
   });
 }
 
